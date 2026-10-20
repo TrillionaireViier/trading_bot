@@ -111,6 +111,17 @@ const getMarketSignal = (change24h) => {
   return { label: 'Neutral', tone: 'neutral' };
 };
 
+const calculateMomentum = (change24h, volume) => {
+  const change = Number(change24h) || 0;
+  const normalizedVolume = Math.min(100, Math.round(((Math.log10((Number(volume) || 0) + 1) / 7) * 100)));
+  const rawScore = change * 3 + (change >= 0 ? normalizedVolume * 0.45 : -normalizedVolume * 0.45);
+  const score = Math.max(-100, Math.min(100, Math.round(rawScore)));
+
+  if (score >= 60) return { score, label: 'Bullish', tone: 'bullish' };
+  if (score <= -60) return { score, label: 'Bearish', tone: 'bearish' };
+  return { score, label: 'Neutral', tone: 'neutral' };
+};
+
 const safeReadStorage = (key, fallbackValue, parser = (value) => value) => {
   try {
     const rawValue = localStorage.getItem(key);
@@ -217,10 +228,7 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
         if (isLoadMore) setMarketData(prev => [...prev, ...validFormatted]);
         else setMarketData(validFormatted);
       } else {
-        // Fallback for the other 23 crypto exchanges (Mock data to avoid CoinGecko 429 Rate Limits / CORS errors)
         const MOCK_TICKERS = ['BTC', 'ETH', 'SOL', 'XRP', 'ADA', 'AVAX', 'DOGE', 'DOT', 'LINK', 'MATIC', 'SHIB', 'LTC', 'UNI', 'ATOM', 'ETC', 'XLM', 'ALGO', 'NEAR', 'VET', 'ICP'];
-
-        // Base realistic prices
         const BASE_PRICES = { 'BTC': 65000, 'ETH': 3500, 'SOL': 140, 'XRP': 0.6, 'ADA': 0.45, 'AVAX': 35, 'DOGE': 0.15, 'DOT': 7, 'LINK': 18, 'MATIC': 0.7, 'SHIB': 0.000025, 'LTC': 80, 'UNI': 10, 'ATOM': 28, 'ETC': 25, 'XLM': 0.12, 'ALGO': 0.33, 'NEAR': 3.3, 'VET': 0.07, 'ICP': 8 };
 
         const formatted = MOCK_TICKERS.map(ticker => {
@@ -270,6 +278,10 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
     notify(`Added ${asset.ticker} to Tracker!`, 'success');
   };
 
+  const topMovers = [...marketData]
+    .sort((a, b) => Math.abs(Number(b.change24h)) - Math.abs(Number(a.change24h)))
+    .slice(0, 4);
+
   return (
     <div className="market-layout" style={{display: 'flex', flexDirection: 'column', gap: '20px', height: '100%', alignItems: 'stretch'}}>
       <div className="market-sidebar" style={{width: '100%', background: 'var(--bg-primary)', borderRadius: '12px', padding: '16px'}}>
@@ -282,21 +294,55 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
           ))}
         </ul>
       </div>
+
       <div className="market-content" style={{flex: 1, background: 'var(--bg-primary)', borderRadius: '12px', padding: '20px', overflowY: 'auto'}}>
         <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px'}}>
           <h2>Top Volatility ({activeTab.toUpperCase()})</h2>
           <button className="btn-secondary" onClick={() => fetchMarketData(activeTab)}>🔄 Refresh</button>
         </div>
+
+        {topMovers.length > 0 && (
+          <div style={{marginBottom: '20px'}}>
+            <h3 style={{marginBottom: '12px', fontSize: '1rem'}}>Top Movers</h3>
+            <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px'}}>
+              {topMovers.map(asset => {
+                const signal = getMarketSignal(asset.change24h);
+                const momentum = calculateMomentum(asset.change24h, asset.volume);
+                return (
+                  <div key={asset.id} style={{background: 'rgba(148, 163, 184, 0.08)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px'}}>
+                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
+                      <strong>{asset.name}</strong>
+                      <span className="badge">{asset.ticker}</span>
+                    </div>
+                    <div style={{fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '8px'}}>
+                      {asset.change24h > 0 ? '+' : ''}{asset.change24h}%
+                    </div>
+                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px'}}>
+                      <span style={{fontSize: '0.8rem'}}>Vol</span>
+                      <span style={{fontSize: '0.8rem'}}>{formatCompactVolume(asset.volume)}</span>
+                    </div>
+                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px'}}>
+                      <span style={{padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: signal.tone === 'overbought' ? 'rgba(16,185,129,0.15)' : signal.tone === 'oversold' ? 'rgba(244,63,94,0.15)' : 'rgba(148,163,184,0.15)', color: signal.tone === 'overbought' ? '#34d399' : signal.tone === 'oversold' ? '#f87171' : '#cbd5e1'}}>{signal.label}</span>
+                      <span style={{padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: momentum.tone === 'bullish' ? 'rgba(56,189,248,0.15)' : momentum.tone === 'bearish' ? 'rgba(168,85,247,0.15)' : 'rgba(148,163,184,0.15)', color: momentum.tone === 'bullish' ? '#7dd3fc' : momentum.tone === 'bearish' ? '#c4b5fd' : '#cbd5e1'}}>RSI {momentum.score}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {loadingMarket ? (
           <div style={{textAlign: 'center', padding: '40px'}}><div className="spinner"></div></div>
         ) : (
           <div className="table-wrapper"><table className="data-table">
             <thead>
-              <tr><th>Asset</th><th>Price</th><th>24h Volatility</th><th>Volume</th><th>Signal</th><th>Funding</th><th>Action</th></tr>
+              <tr><th>Asset</th><th>Price</th><th>24h Volatility</th><th>Volume</th><th>Signal</th><th>Momentum</th><th>Funding</th><th>Action</th></tr>
             </thead>
             <tbody>
               {marketData.map(asset => {
                 const signal = getMarketSignal(asset.change24h);
+                const momentum = calculateMomentum(asset.change24h, asset.volume);
                 return (
                   <tr key={asset.id}>
                     <td><strong>{asset.name}</strong> <span className="badge">{asset.ticker}</span></td>
@@ -306,16 +352,22 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
                     </td>
                     <td>{formatCompactVolume(asset.volume)}</td>
                     <td>
-                      <span className={`signal-tag ${signal.tone}`}>
+                      <span style={{padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: signal.tone === 'overbought' ? 'rgba(16,185,129,0.15)' : signal.tone === 'oversold' ? 'rgba(244,63,94,0.15)' : 'rgba(148,163,184,0.15)', color: signal.tone === 'overbought' ? '#34d399' : signal.tone === 'oversold' ? '#f87171' : '#cbd5e1'}}>
                         {signal.label}
                       </span>
+                    </td>
+                    <td>
+                      <div style={{display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start'}}>
+                        <span style={{padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: momentum.tone === 'bullish' ? 'rgba(56,189,248,0.15)' : momentum.tone === 'bearish' ? 'rgba(168,85,247,0.15)' : 'rgba(148,163,184,0.15)', color: momentum.tone === 'bullish' ? '#7dd3fc' : momentum.tone === 'bearish' ? '#c4b5fd' : '#cbd5e1'}}>{momentum.label}</span>
+                        <small style={{color: 'var(--text-secondary)'}}>{momentum.score}</small>
+                      </div>
                     </td>
                     <td style={{color: parseFloat(asset.funding) >= 0 ? '#10b981' : '#ef4444'}}>{asset.funding}</td>
                     <td><button className="btn-primary" style={{padding: '6px 12px', fontSize: '0.85rem'}} onClick={() => handleAddAsset(asset)}>+ Tracker</button></td>
                   </tr>
                 );
               })}
-              {marketData.length === 0 && <tr><td colSpan="7" style={{textAlign:'center'}}>No data available</td></tr>}
+              {marketData.length === 0 && <tr><td colSpan="8" style={{textAlign:'center'}}>No data available</td></tr>}
             </tbody>
           </table>
 
@@ -405,9 +457,8 @@ function App() {
 
   // Lifecycle
   useEffect(() => {
-    setTimeout(() => setLoading(false), 800); // Simulate network load
+    setTimeout(() => setLoading(false), 800);
 
-    // Auto-refresh prices on initial load to get rid of $0
     const initialRefresh = async () => {
       let updatedCount = 0;
       const newAssets = await Promise.all(assets.map(async (asset) => {
@@ -422,7 +473,6 @@ function App() {
         setAssets(newAssets);
       }
     };
-    // Call it after a short delay so it doesn't block initial render
     setTimeout(initialRefresh, 1000);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -438,7 +488,6 @@ function App() {
     safeWriteStorage('trading_settings', JSON.stringify(settings));
   }, [assets, logs, settings]);
 
-  // Helpers
   const addLog = (action, details) => {
     setLogs(prev => [{ id: Date.now(), time: new Date().toLocaleTimeString(), action, details }, ...prev].slice(0, 50));
   };
@@ -465,12 +514,10 @@ function App() {
         return parseFloat(data.c).toFixed(2);
       }
     } catch (e) {
-      // notify(`Could not fetch price for ${ticker}: ${e.message}`, 'error');
       return null;
     }
   };
 
-  // Auto-Pilot Tracker
   useEffect(() => {
     let interval;
     if (autoPilot) {
@@ -486,12 +533,10 @@ function App() {
 
             if (oldPrice > 0) {
               const changePercent = ((livePrice - oldPrice) / oldPrice) * 100;
-              // If price pumped by 2% or more
               if (changePercent >= 2) {
                 notify(`Auto-Pilot Alert: ${asset.ticker} pumped +${changePercent.toFixed(1)}%!`, 'success');
                 addLog('Auto-Pilot', `Alert for ${asset.ticker} (+${changePercent.toFixed(1)}%)`);
 
-                // Broadcast to all configured Telegram channels
                 settings.tgChannels.forEach(async (channel) => {
                   if (!channel.botToken) return;
                   const text = settings.msgTemplate
@@ -518,12 +563,11 @@ function App() {
         if (updatedAssets) {
           setAssets(newAssets);
         }
-      }, 60000); // Check every 60 seconds
+      }, 60000);
     }
     return () => clearInterval(interval);
   }, [autoPilot, assets, settings]);
 
-  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.metaKey && e.key === 'k') {
@@ -555,7 +599,6 @@ function App() {
     }
   };
 
-  // Actions
   const handleImportCSV = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -611,7 +654,6 @@ function App() {
     notify('Assets deleted', 'success');
   };
 
-  // Telegram Integration
   const handleOpenTgPublish = () => {
     if (settings.tgChannels.length === 0) {
       return notify('Configure at least 1 Telegram Channel in Settings first!', 'error');
@@ -656,7 +698,6 @@ function App() {
     setSelectedIds([]);
   };
 
-  // Filtering & Sorting
   const filteredAssets = assets
     .filter(a => a.name.toLowerCase().includes(searchQuery.toLowerCase()) || a.ticker.toLowerCase().includes(searchQuery.toLowerCase()))
     .sort((a, b) => {
@@ -678,14 +719,12 @@ function App() {
 
   return (
     <div className={`app-container ${theme}`}>
-      {/* Notifications overlay */}
       <div className="notifications-container">
         {notifications.map(n => (
           <div key={n.id} className={`notification-toast ${n.type}`}>{n.msg}</div>
         ))}
       </div>
 
-      {/* Delete Confirmation Modal */}
       {showDeleteModal && (
         <div className="modal-overlay">
           <div className="modal-content">
@@ -700,7 +739,6 @@ function App() {
         </div>
       )}
 
-      {/* Telegram Channel Select Modal */}
       {showTgModal && (
         <div className="modal-overlay">
           <div className="modal-content">
@@ -728,7 +766,6 @@ function App() {
         </div>
       )}
 
-      {/* Add Telegram Channel Modal */}
       {showAddChannelModal && (
         <div className="modal-overlay">
           <div className="modal-content">
@@ -763,7 +800,6 @@ function App() {
         </div>
       )}
 
-      {/* Add Asset Modal */}
       {showAddModal && (
         <div className="modal-overlay">
           <div className="modal-content">
@@ -819,7 +855,6 @@ function App() {
         </div>
       )}
 
-      {/* Sidebar */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <h2 className="gradient-text">Trading Enterprise</h2>
@@ -840,7 +875,6 @@ function App() {
         </div>
       </aside>
 
-      {/* Main Content */}
       <main className="main-content">
         <header className="topbar">
           <div className="topbar-left">
@@ -869,7 +903,6 @@ function App() {
 
             <Route path="/dashboard" element={
               <div className="dashboard-grid">
-                {/* Widgets Row 1 */}
                 <div className="widget stat-card">
                   <h3>{t.totalValue}</h3>
                   <div className="stat-value">$1,245,000</div>
@@ -888,7 +921,6 @@ function App() {
                   </div>
                 </div>
 
-                {/* Widgets Row 2 */}
                 <div className="widget chart-widget col-span-2" style={{padding: 0, overflow: 'hidden'}}>
                   <iframe
                     src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_wen&symbol=NASDAQ%3AWEN&interval=D&symboledit=1&saveimage=1&toolbarbg=1e293b&studies=%5B%5D&theme=dark&style=1&timezone=Etc%2FUTC"
@@ -937,9 +969,7 @@ function App() {
                     {selectedIds.length > 0 && (
                       <>
                         <button className="btn-danger" onClick={handleBatchDelete}><Trash2 size={16}/> Delete ({selectedIds.length})</button>
-                        <button className="btn-secondary" onClick={handleOpenTgPublish}>
-                          Publish to TG
-                        </button>
+                        <button className="btn-secondary" onClick={handleOpenTgPublish}>Publish to TG</button>
                       </>
                     )}
                   </div>
