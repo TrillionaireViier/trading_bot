@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
-import { 
+import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
-  CartesianGrid, Legend 
+  CartesianGrid, Legend
 } from 'recharts';
-import { 
-  Bell, Settings, LogOut, Sun, Moon, Search, Download, Upload, Trash2, 
+import {
+  Bell, Settings, LogOut, Sun, Moon, Search, Download, Upload, Trash2,
   Edit2, Menu, X, Check, Eye, Save, Plus, ArrowUpRight, ArrowDownRight, Printer, AlertTriangle, Send
 } from 'lucide-react';
 import Papa from 'papaparse';
@@ -30,7 +30,7 @@ const TRANSLATIONS = {
     search: 'Search assets...', totalValue: 'Total Portfolio Value', topGainers: 'Top Gainers', news: 'Market News'
   },
   ru: {
-    dashboard: 'Главная', market: 'Сканер Рынков', assets: 'Активы', analytics: 'Аналитика', logs: 'Журнал', settings: 'Настройки', recorder: 'Запись Экрана',
+    dashboard: 'Главная', market: 'Сканер Рынков', assets: 'Активы', analytics: 'Аналитика', logs: 'Журнал', settings: 'Настройки', recorder: 'Запись',
     search: 'Поиск...', totalValue: 'Общая Стоимость', topGainers: 'Лидеры Роста', news: 'Новости Рынка'
   }
 };
@@ -66,8 +66,8 @@ const MARKET_TABS = [
 ];
 
 const ALL_STOCKS = [
-  'AAPL', 'TSLA', 'NVDA', 'MSFT', 'GME', 'AMC', 'MSTR', 'COIN', 'WEN', 'META', 
-  'AMZN', 'GOOGL', 'NFLX', 'AMD', 'PLTR', 'HOOD', 'INTC', 'BA', 'DIS', 'SPY', 
+  'AAPL', 'TSLA', 'NVDA', 'MSFT', 'GME', 'AMC', 'MSTR', 'COIN', 'WEN', 'META',
+  'AMZN', 'GOOGL', 'NFLX', 'AMD', 'PLTR', 'HOOD', 'INTC', 'BA', 'DIS', 'SPY',
   'QQQ', 'UBER', 'ABNB', 'SNOW', 'PYPL', 'SQ', 'SHOP', 'CRWD', 'PANW', 'DDOG',
   'NET', 'ROKU', 'ZM', 'PINS', 'SNAP', 'SPOT', 'DOCU', 'TWLO', 'U', 'RBLX',
   'RIVN', 'LCID', 'NIO', 'XPEV', 'LI', 'BABA', 'JD', 'PDD', 'BIDU', 'NTES',
@@ -96,6 +96,24 @@ const ALL_COMMODITIES = [
   { sym: 'OANDA:EUR_GBP', name: 'EUR/GBP' }
 ];
 
+const safeReadStorage = (key, fallbackValue, parser = (value) => value) => {
+  try {
+    const rawValue = localStorage.getItem(key);
+    if (rawValue === null) return fallbackValue;
+    return parser(rawValue);
+  } catch {
+    return fallbackValue;
+  }
+};
+
+const safeWriteStorage = (key, value) => {
+  try {
+    localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+  } catch {
+    // Ignore storage exceptions so the app continues to work in private browsing or restricted environments.
+  }
+};
+
 const MarketView = ({ assets, setAssets, notify, addLog }) => {
   const [activeTab, setActiveTab] = useState('binance');
   const [marketData, setMarketData] = useState([]);
@@ -114,7 +132,7 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
       setLoadingMarket(true);
       setMarketData([]);
     }
-    
+
     try {
       if (tab === 'binance') {
         const res = await fetch('https://api.binance.com/api/v3/ticker/24hr');
@@ -147,7 +165,7 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
       } else if (tab === 'stocks') {
         const startIndex = isLoadMore ? loadedCount : 0;
         const symbolsToFetch = ALL_STOCKS.slice(startIndex, limit);
-        
+
         const formatted = await Promise.all(symbolsToFetch.map(async sym => {
           const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=d9s6frpr01qoo7o6rp6gd9s6frpr01qoo7o6rp70`);
           const data = await res.json();
@@ -159,17 +177,17 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
           const change = data.pc > 0 ? ((data.c - data.pc) / data.pc) * 100 : 0;
           return { id: sym, name: sym, ticker: sym, price: parseFloat(data.c).toFixed(2), change24h: change.toFixed(2), funding: '-', type: 'Stock', source: 'Finnhub' };
         }));
-        
+
         if (isLoadMore) setMarketData(prev => [...prev, ...formatted]);
         else setMarketData(formatted);
       } else if (tab === 'gold') {
         const startIndex = isLoadMore ? loadedCount : 0;
         const symbolsToFetch = ALL_COMMODITIES.slice(startIndex, limit);
-        
+
         const formatted = await Promise.all(symbolsToFetch.map(async s => {
           const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${s.sym}&token=d9s6frpr01qoo7o6rp6gd9s6frpr01qoo7o6rp70`);
           const data = await res.json();
-          if (data.error || (!data && data.c === 0)) {
+          if (!data || data.error || data.c === 0) {
             const mockPrice = 100 + (Math.random() * 50);
             const randomChange = (Math.random() * 2 - 1).toFixed(2);
             return { id: s.sym, name: s.name, ticker: s.name.split(' ')[0], price: mockPrice.toFixed(2), change24h: randomChange, funding: '-', type: 'Commodity', source: 'Mock (API Key Invalid)' };
@@ -177,38 +195,38 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
           const change = data.pc > 0 ? ((data.c - data.pc) / data.pc) * 100 : 0;
           return { id: s.sym, name: s.name, ticker: s.name.split(' ')[0], price: parseFloat(data.c).toFixed(2), change24h: change.toFixed(2), funding: '-', type: 'Commodity', source: 'Finnhub' };
         }));
-        
+
         const validFormatted = formatted.filter(Boolean);
         if (isLoadMore) setMarketData(prev => [...prev, ...validFormatted]);
         else setMarketData(validFormatted);
       } else {
         // Fallback for the other 23 crypto exchanges (Mock data to avoid CoinGecko 429 Rate Limits / CORS errors)
         const MOCK_TICKERS = ['BTC', 'ETH', 'SOL', 'XRP', 'ADA', 'AVAX', 'DOGE', 'DOT', 'LINK', 'MATIC', 'SHIB', 'LTC', 'UNI', 'ATOM', 'ETC', 'XLM', 'ALGO', 'NEAR', 'VET', 'ICP'];
-        
+
         // Base realistic prices
-        const BASE_PRICES = { 'BTC': 65000, 'ETH': 3500, 'SOL': 140, 'XRP': 0.6, 'ADA': 0.45, 'AVAX': 35, 'DOGE': 0.15, 'DOT': 7, 'LINK': 18, 'MATIC': 0.7, 'SHIB': 0.000025, 'LTC': 80, 'UNI': 10, 'ATOM': 9, 'ETC': 28, 'XLM': 0.11, 'ALGO': 0.18, 'NEAR': 7.5, 'VET': 0.04, 'ICP': 12 };
-        
+        const BASE_PRICES = { 'BTC': 65000, 'ETH': 3500, 'SOL': 140, 'XRP': 0.6, 'ADA': 0.45, 'AVAX': 35, 'DOGE': 0.15, 'DOT': 7, 'LINK': 18, 'MATIC': 0.7, 'SHIB': 0.000025, 'LTC': 80, 'UNI': 10, 'ATOM': 28, 'ETC': 25, 'XLM': 0.12, 'ALGO': 0.33, 'NEAR': 3.3, 'VET': 0.07, 'ICP': 8 };
+
         // Generate a slightly unique version of the market per exchange based on its name length to make it look real
-        const randomFactor = tab.length; 
-        
+        const randomFactor = tab.length;
+
         const formatted = MOCK_TICKERS.map(ticker => {
           const basePrice = BASE_PRICES[ticker];
           // Add some random noise to the price specific to this exchange
-          const priceNoise = basePrice * (Math.random() * 0.002 - 0.001); 
+          const priceNoise = basePrice * (Math.random() * 0.002 - 0.001);
           const currentPrice = basePrice + priceNoise;
-          
+
           return {
-            id: ticker + 'USDT', 
-            name: ticker, 
+            id: ticker + 'USDT',
+            name: ticker,
             ticker: ticker + 'USDT',
-            price: currentPrice.toFixed(4 >= currentPrice ? 4 : 2), 
+            price: currentPrice.toFixed(currentPrice >= 100 ? 2 : 4),
             change24h: (Math.random() * 10 - 5).toFixed(2),
             funding: (Math.random() * 0.02 - 0.01).toFixed(4) + '%',
-            type: 'Crypto', 
+            type: 'Crypto',
             source: tab.toUpperCase()
           };
         });
-        
+
         // Simulate a tiny network delay for realism
         await new Promise(resolve => setTimeout(resolve, 300));
         setMarketData(formatted);
@@ -216,7 +234,7 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
     } catch (e) {
       notify('Error fetching market data. API might be rate-limited.', 'error');
     }
-    
+
     if (isLoadMore) {
       setLoadedCount(limit);
       setLoadingMore(false);
@@ -245,7 +263,7 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
         <h3 style={{marginBottom: '16px', fontSize: '1.1rem'}}>Markets</h3>
         <ul style={{listStyle: 'none', padding: 0, margin: 0, display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '8px'}}>
           {MARKET_TABS.map(t => (
-            <li key={t.id} onClick={() => setActiveTab(t.id)} style={{padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: activeTab === t.id ? 'var(--accent-color)' : 'transparent', color: activeTab === t.id ? '#fff' : 'var(--text-secondary)', fontWeight: activeTab === t.id ? 'bold' : 'normal', fontSize: '0.9rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center'}}>
+            <li key={t.id} onClick={() => setActiveTab(t.id)} style={{padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: activeTab === t.id ? 'var(--accent-color)' : 'transparent', color: activeTab === t.id ? '#fff' : 'var(--text-primary)', border: '1px solid var(--border-color)'}}>
               {t.label}
             </li>
           ))}
@@ -278,12 +296,12 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
               {marketData.length === 0 && <tr><td colSpan="5" style={{textAlign:'center'}}>No data available</td></tr>}
             </tbody>
           </table>
-          
+
           {(activeTab === 'stocks' || activeTab === 'gold') && (
             <div style={{textAlign: 'center', marginTop: '20px'}}>
-              <button 
-                className="btn-secondary" 
-                onClick={handleLoadMore} 
+              <button
+                className="btn-secondary"
+                onClick={handleLoadMore}
                 disabled={loadingMore || (activeTab === 'stocks' ? loadedCount >= ALL_STOCKS.length : loadedCount >= ALL_COMMODITIES.length)}
               >
                 {loadingMore ? 'Loading...' : (activeTab === 'stocks' && loadedCount >= ALL_STOCKS.length) || (activeTab === 'gold' && loadedCount >= ALL_COMMODITIES.length) ? 'All Loaded' : '⬇ Load More'}
@@ -301,24 +319,26 @@ function App() {
   const [loading, setLoading] = useState(true);
   const location = useLocation();
   const activeTab = location.pathname.substring(1) || 'dashboard';
-  
+
   // Theme & Language
-  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
-  const [lang, setLang] = useState(() => localStorage.getItem('lang') || 'en');
-  
+  const [theme, setTheme] = useState(() => safeReadStorage('theme', 'dark'));
+  const [lang, setLang] = useState(() => safeReadStorage('lang', 'en'));
+
   // Layout
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  
+
   // Data
   const [assets, setAssets] = useState(() => {
-    const saved = localStorage.getItem('trading_assets_v2');
-    let parsed = saved ? JSON.parse(saved) : [
-      { id: Date.now(), name: "Wendy's", ticker: 'WEN', price: '0', type: 'Stock', date: new Date().toLocaleDateString() }
-    ];
-    return parsed.map(a => (a.price === 'NaN' || Number.isNaN(a.price) ? { ...a, price: '0' } : a));
+    const saved = safeReadStorage('trading_assets_v2', null, (value) => JSON.parse(value));
+    const fallback = [{ id: Date.now(), name: "Wendy's", ticker: 'WEN', price: '0', type: 'Stock', date: new Date().toLocaleDateString() }];
+    const parsed = Array.isArray(saved) ? saved : fallback;
+    return parsed.map(a => (a && (a.price === 'NaN' || Number.isNaN(a.price)) ? { ...a, price: '0' } : a));
   });
-  const [logs, setLogs] = useState(() => JSON.parse(localStorage.getItem('trading_logs') || '[]'));
-  
+  const [logs, setLogs] = useState(() => {
+    const saved = safeReadStorage('trading_logs', [], (value) => JSON.parse(value));
+    return Array.isArray(saved) ? saved : [];
+  });
+
   // Table state
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
@@ -326,14 +346,14 @@ function App() {
   const itemsPerPage = 5;
   const [selectedIds, setSelectedIds] = useState([]);
   const [editingId, setEditingId] = useState(null);
-  
+
   // Auto-Pilot
   const [autoPilot, setAutoPilot] = useState(false);
   const autoPilotRef = useRef(autoPilot);
   useEffect(() => {
     autoPilotRef.current = autoPilot;
   }, [autoPilot]);
-  
+
   // Modals
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -343,11 +363,11 @@ function App() {
   const [newChannel, setNewChannel] = useState({ name: '', chatId: '', botToken: '' });
   const [assetsToPublish, setAssetsToPublish] = useState([]);
   const [selectedTgChannels, setSelectedTgChannels] = useState([]);
-  
+
   // Forms & Settings
   const [settings, setSettings] = useState(() => {
-    const saved = JSON.parse(localStorage.getItem('trading_settings') || '{}');
-    const channels = saved.tgChannels || [];
+    const saved = safeReadStorage('trading_settings', {}, (value) => JSON.parse(value));
+    const channels = Array.isArray(saved.tgChannels) ? saved.tgChannels : [];
     if (channels.length === 0 && saved.tgChatId && saved.tgBotToken) {
       channels.push({ id: 1, name: 'Default Channel', chatId: saved.tgChatId, botToken: saved.tgBotToken });
     }
@@ -357,14 +377,14 @@ function App() {
     };
   });
   const [notifications, setNotifications] = useState([]);
-  
+
   const fileInputRef = useRef(null);
-  const t = TRANSLATIONS[lang];
+  const t = TRANSLATIONS[lang] || TRANSLATIONS.en;
 
   // Lifecycle
   useEffect(() => {
     setTimeout(() => setLoading(false), 800); // Simulate network load
-    
+
     // Auto-refresh prices on initial load to get rid of $0
     const initialRefresh = async () => {
       let updatedCount = 0;
@@ -387,13 +407,13 @@ function App() {
 
   useEffect(() => {
     document.body.className = theme;
-    localStorage.setItem('theme', theme);
+    safeWriteStorage('theme', theme);
   }, [theme]);
 
   useEffect(() => {
-    localStorage.setItem('trading_assets_v2', JSON.stringify(assets));
-    localStorage.setItem('trading_logs', JSON.stringify(logs));
-    localStorage.setItem('trading_settings', JSON.stringify(settings));
+    safeWriteStorage('trading_assets_v2', JSON.stringify(assets));
+    safeWriteStorage('trading_logs', JSON.stringify(logs));
+    safeWriteStorage('trading_settings', JSON.stringify(settings));
   }, [assets, logs, settings]);
 
   // Helpers
@@ -427,7 +447,7 @@ function App() {
       return null;
     }
   };
-  
+
   // Auto-Pilot Tracker
   useEffect(() => {
     let interval;
@@ -435,20 +455,20 @@ function App() {
       interval = setInterval(async () => {
         if (!autoPilotRef.current) return;
         let updatedAssets = false;
-        
+
         const newAssets = await Promise.all(assets.map(async (asset) => {
           const livePriceStr = await fetchLivePrice(asset.ticker, asset.type);
           if (livePriceStr && livePriceStr !== asset.price) {
             const livePrice = parseFloat(livePriceStr);
             const oldPrice = parseFloat(asset.price);
-            
+
             if (oldPrice > 0) {
               const changePercent = ((livePrice - oldPrice) / oldPrice) * 100;
               // If price pumped by 2% or more
               if (changePercent >= 2) {
                 notify(`Auto-Pilot Alert: ${asset.ticker} pumped +${changePercent.toFixed(1)}%!`, 'success');
                 addLog('Auto-Pilot', `Alert for ${asset.ticker} (+${changePercent.toFixed(1)}%)`);
-                
+
                 // Broadcast to all configured Telegram channels
                 settings.tgChannels.forEach(async (channel) => {
                   if (!channel.botToken) return;
@@ -456,7 +476,7 @@ function App() {
                     .replace('{name}', asset.name)
                     .replace('{ticker}', asset.ticker)
                     .replace('{price}', livePriceStr);
-                  
+
                   try {
                     await fetch(`https://api.telegram.org/bot${channel.botToken}/sendMessage`, {
                       method: 'POST',
@@ -472,7 +492,7 @@ function App() {
           }
           return asset;
         }));
-        
+
         if (updatedAssets) {
           setAssets(newAssets);
         }
@@ -585,18 +605,18 @@ function App() {
     if (selectedTgChannels.length === 0) return notify('Select at least one channel', 'error');
     setShowTgModal(false);
     notify(`Sending ${assetsToPublish.length} items to ${selectedTgChannels.length} channels...`);
-    
+
     let sentCount = 0;
     for (const channelId of selectedTgChannels) {
       const channel = settings.tgChannels.find(c => c.id === channelId);
       if (!channel || !channel.botToken) continue;
-      
+
       for (const asset of assetsToPublish) {
         const text = settings.msgTemplate
           .replace('{name}', asset.name)
           .replace('{ticker}', asset.ticker)
           .replace('{price}', asset.price);
-        
+
         try {
           await fetch(`https://api.telegram.org/bot${channel.botToken}/sendMessage`, {
             method: 'POST',
@@ -668,11 +688,11 @@ function App() {
             <div style={{textAlign: 'left', marginBottom: '24px', maxHeight: '150px', overflowY: 'auto', padding: '10px', background: 'var(--bg-primary)', borderRadius: '8px'}}>
               {settings.tgChannels.map(ch => (
                 <label key={ch.id} style={{display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0', cursor: 'pointer', borderBottom: '1px solid var(--border-color)'}}>
-                  <input type="checkbox" checked={selectedTgChannels.includes(ch.id)} 
+                  <input type="checkbox" checked={selectedTgChannels.includes(ch.id)}
                     onChange={(e) => {
                       if (e.target.checked) setSelectedTgChannels([...selectedTgChannels, ch.id]);
                       else setSelectedTgChannels(selectedTgChannels.filter(id => id !== ch.id));
-                    }} 
+                    }}
                   />
                   <span>{ch.name} <span style={{color: 'var(--text-secondary)', fontSize: '0.85rem'}}>({ch.chatId})</span></span>
                 </label>
@@ -824,7 +844,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/market" element={<MarketView assets={assets} setAssets={setAssets} notify={notify} addLog={addLog} />} />
-            
+
             <Route path="/dashboard" element={
               <div className="dashboard-grid">
                 {/* Widgets Row 1 */}
@@ -848,17 +868,17 @@ function App() {
 
                 {/* Widgets Row 2 */}
                 <div className="widget chart-widget col-span-2" style={{padding: 0, overflow: 'hidden'}}>
-                  <iframe 
-                    src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_wen&symbol=NASDAQ%3AWEN&interval=D&symboledit=1&saveimage=1&toolbarbg=1e293b&studies=%5B%5D&theme=dark&style=1&timezone=Etc%2FUTC&studies_overrides=%7B%7D&overrides=%7B%7D&enable_publishing=false&hideideas=1&hideideasbutton=1&hide_legend=0&hide_side_toolbar=0&backgroundColor=rgba(15%2C%2023%2C%2042%2C%201)&gridColor=rgba(51%2C%2065%2C%2085%2C%200.5)"
-                    width="100%" 
-                    height="350" 
-                    frameBorder="0" 
-                    allowTransparency="true" 
-                    scrolling="no" 
+                  <iframe
+                    src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_wen&symbol=NASDAQ%3AWEN&interval=D&symboledit=1&saveimage=1&toolbarbg=1e293b&studies=%5B%5D&theme=dark&style=1&timezone=Etc%2FUTC"
+                    width="100%"
+                    height="350"
+                    frameBorder="0"
+                    allowTransparency="true"
+                    scrolling="no"
                     allowFullScreen>
                   </iframe>
                 </div>
-                
+
                 <div className="widget news-widget">
                   <h3>{t.news}</h3>
                   <div className="news-list">
@@ -914,9 +934,9 @@ function App() {
                     <thead>
                       <tr>
                         <th>
-                          <input type="checkbox" 
+                          <input type="checkbox"
                             checked={selectedIds.length === paginatedAssets.length && paginatedAssets.length > 0}
-                            onChange={(e) => setSelectedIds(e.target.checked ? paginatedAssets.map(a=>a.id) : [])} 
+                            onChange={(e) => setSelectedIds(e.target.checked ? paginatedAssets.map(a=>a.id) : [])}
                           />
                         </th>
                         <th onClick={() => setSortConfig({key: 'name', direction: sortConfig.direction === 'asc' ? 'desc' : 'asc'})}>Name ↕</th>
@@ -930,8 +950,8 @@ function App() {
                       {paginatedAssets.map(asset => (
                         <tr key={asset.id} className={selectedIds.includes(asset.id) ? 'selected' : ''}>
                           <td>
-                            <input type="checkbox" checked={selectedIds.includes(asset.id)} 
-                              onChange={(e) => setSelectedIds(e.target.checked ? [...selectedIds, asset.id] : selectedIds.filter(id=>id!==asset.id))} 
+                            <input type="checkbox" checked={selectedIds.includes(asset.id)}
+                              onChange={(e) => setSelectedIds(e.target.checked ? [...selectedIds, asset.id] : selectedIds.filter(id=>id!==asset.id))}
                             />
                           </td>
                           <td>{editingId === asset.id ? <input defaultValue={asset.name} onBlur={(e) => {
@@ -962,7 +982,7 @@ function App() {
                     </tbody>
                   </table>
                 </div>
-                
+
                 <div className="pagination">
                   <button disabled={currentPage === 1} onClick={() => setCurrentPage(p=>p-1)}>Prev</button>
                   <span>Page {currentPage} of {Math.ceil(filteredAssets.length / itemsPerPage) || 1}</span>
@@ -1012,7 +1032,7 @@ function App() {
                     <h4>Connected Channels & Bots</h4>
                     <div style={{display:'flex', flexDirection:'column', gap:'10px', marginBottom: '16px'}}>
                       {settings.tgChannels.map(ch => (
-                        <div key={ch.id} style={{display:'flex', justifyContent:'space-between', background:'var(--bg-primary)', padding:'12px', border:'1px solid var(--border-color)', borderRadius:'8px', alignItems:'center'}}>
+                        <div key={ch.id} style={{display:'flex', justifyContent:'space-between', background:'var(--bg-primary)', padding:'12px', border:'1px solid var(--border-color)', borderRadius:'8px'}}>
                           <div>
                             <strong>{ch.name}</strong><br/>
                             <small className="text-muted">Chat: {ch.chatId}</small><br/>
@@ -1027,7 +1047,7 @@ function App() {
                     </div>
                     <button className="btn-secondary" style={{width: '100%', justifyContent: 'center'}} onClick={() => setShowAddChannelModal(true)}><Plus size={16}/> Add Bot & Channel</button>
                   </div>
-                  
+
                   <div className="settings-card">
                     <h3>Message Templates</h3>
                     <div className="form-group">
