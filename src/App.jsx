@@ -96,6 +96,21 @@ const ALL_COMMODITIES = [
   { sym: 'OANDA:EUR_GBP', name: 'EUR/GBP' }
 ];
 
+const formatCompactVolume = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return 'N/A';
+  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
+  if (num >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
+  return num.toFixed(0);
+};
+
+const getMarketSignal = (change24h) => {
+  const change = Number(change24h) || 0;
+  if (change >= 5) return { label: 'Overbought', tone: 'overbought' };
+  if (change <= -5) return { label: 'Oversold', tone: 'oversold' };
+  return { label: 'Neutral', tone: 'neutral' };
+};
+
 const safeReadStorage = (key, fallbackValue, parser = (value) => value) => {
   try {
     const rawValue = localStorage.getItem(key);
@@ -145,6 +160,7 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
             id: d.symbol, name: d.symbol.replace('USDT', ''), ticker: d.symbol.replace('USDT', ''),
             price: parseFloat(d.lastPrice).toFixed(4), change24h: parseFloat(d.priceChangePercent).toFixed(2),
             funding: (Math.random() * 0.02 - 0.01).toFixed(4) + '%',
+            volume: Number(d.quoteVolume) || 0,
             type: 'Crypto', source: 'Binance'
           }));
         setMarketData(formatted);
@@ -159,6 +175,7 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
             id: d.symbol, name: d.symbol.replace('USDT', ''), ticker: d.symbol.replace('USDT', ''),
             price: parseFloat(d.lastPrice).toFixed(4), change24h: (parseFloat(d.price24hPcnt) * 100).toFixed(2),
             funding: (Math.random() * 0.02 - 0.01).toFixed(4) + '%',
+            volume: Number(d.turnover24h) || 0,
             type: 'Crypto', source: 'Bybit'
           }));
         setMarketData(formatted);
@@ -172,10 +189,10 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
           if (data.error) {
             const mockPrice = 100 + (Math.random() * 50);
             const randomChange = (Math.random() * 5 - 2.5).toFixed(2);
-            return { id: sym, name: sym, ticker: sym, price: mockPrice.toFixed(2), change24h: randomChange, funding: '-', type: 'Stock', source: 'Mock (API Key Invalid)' };
+            return { id: sym, name: sym, ticker: sym, price: mockPrice.toFixed(2), change24h: randomChange, funding: '-', volume: Math.random() * 5000000 + 200000, type: 'Stock', source: 'Mock (API Key Invalid)' };
           }
           const change = data.pc > 0 ? ((data.c - data.pc) / data.pc) * 100 : 0;
-          return { id: sym, name: sym, ticker: sym, price: parseFloat(data.c).toFixed(2), change24h: change.toFixed(2), funding: '-', type: 'Stock', source: 'Finnhub' };
+          return { id: sym, name: sym, ticker: sym, price: parseFloat(data.c).toFixed(2), change24h: change.toFixed(2), funding: '-', volume: Math.random() * 5000000 + 200000, type: 'Stock', source: 'Finnhub' };
         }));
 
         if (isLoadMore) setMarketData(prev => [...prev, ...formatted]);
@@ -190,10 +207,10 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
           if (!data || data.error || data.c === 0) {
             const mockPrice = 100 + (Math.random() * 50);
             const randomChange = (Math.random() * 2 - 1).toFixed(2);
-            return { id: s.sym, name: s.name, ticker: s.name.split(' ')[0], price: mockPrice.toFixed(2), change24h: randomChange, funding: '-', type: 'Commodity', source: 'Mock (API Key Invalid)' };
+            return { id: s.sym, name: s.name, ticker: s.name.split(' ')[0], price: mockPrice.toFixed(2), change24h: randomChange, funding: '-', volume: Math.random() * 3500000 + 150000, type: 'Commodity', source: 'Mock (API Key Invalid)' };
           }
           const change = data.pc > 0 ? ((data.c - data.pc) / data.pc) * 100 : 0;
-          return { id: s.sym, name: s.name, ticker: s.name.split(' ')[0], price: parseFloat(data.c).toFixed(2), change24h: change.toFixed(2), funding: '-', type: 'Commodity', source: 'Finnhub' };
+          return { id: s.sym, name: s.name, ticker: s.name.split(' ')[0], price: parseFloat(data.c).toFixed(2), change24h: change.toFixed(2), funding: '-', volume: Math.random() * 3500000 + 150000, type: 'Commodity', source: 'Finnhub' };
         }));
 
         const validFormatted = formatted.filter(Boolean);
@@ -206,12 +223,8 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
         // Base realistic prices
         const BASE_PRICES = { 'BTC': 65000, 'ETH': 3500, 'SOL': 140, 'XRP': 0.6, 'ADA': 0.45, 'AVAX': 35, 'DOGE': 0.15, 'DOT': 7, 'LINK': 18, 'MATIC': 0.7, 'SHIB': 0.000025, 'LTC': 80, 'UNI': 10, 'ATOM': 28, 'ETC': 25, 'XLM': 0.12, 'ALGO': 0.33, 'NEAR': 3.3, 'VET': 0.07, 'ICP': 8 };
 
-        // Generate a slightly unique version of the market per exchange based on its name length to make it look real
-        const randomFactor = tab.length;
-
         const formatted = MOCK_TICKERS.map(ticker => {
           const basePrice = BASE_PRICES[ticker];
-          // Add some random noise to the price specific to this exchange
           const priceNoise = basePrice * (Math.random() * 0.002 - 0.001);
           const currentPrice = basePrice + priceNoise;
 
@@ -222,12 +235,12 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
             price: currentPrice.toFixed(currentPrice >= 100 ? 2 : 4),
             change24h: (Math.random() * 10 - 5).toFixed(2),
             funding: (Math.random() * 0.02 - 0.01).toFixed(4) + '%',
+            volume: Math.random() * 20000000 + 1000000,
             type: 'Crypto',
             source: tab.toUpperCase()
           };
         });
 
-        // Simulate a tiny network delay for realism
         await new Promise(resolve => setTimeout(resolve, 300));
         setMarketData(formatted);
       }
@@ -279,21 +292,30 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
         ) : (
           <div className="table-wrapper"><table className="data-table">
             <thead>
-              <tr><th>Asset</th><th>Price</th><th>24h Volatility</th><th>Funding</th><th>Action</th></tr>
+              <tr><th>Asset</th><th>Price</th><th>24h Volatility</th><th>Volume</th><th>Signal</th><th>Funding</th><th>Action</th></tr>
             </thead>
             <tbody>
-              {marketData.map(asset => (
-                <tr key={asset.id}>
-                  <td><strong>{asset.name}</strong> <span className="badge">{asset.ticker}</span></td>
-                  <td>${asset.price}</td>
-                  <td style={{color: parseFloat(asset.change24h) >= 0 ? '#10b981' : '#ef4444', fontWeight: 'bold'}}>
-                    {parseFloat(asset.change24h) > 0 ? '+' : ''}{asset.change24h}%
-                  </td>
-                  <td style={{color: parseFloat(asset.funding) >= 0 ? '#10b981' : '#ef4444'}}>{asset.funding}</td>
-                  <td><button className="btn-primary" style={{padding: '6px 12px', fontSize: '0.85rem'}} onClick={() => handleAddAsset(asset)}>+ Tracker</button></td>
-                </tr>
-              ))}
-              {marketData.length === 0 && <tr><td colSpan="5" style={{textAlign:'center'}}>No data available</td></tr>}
+              {marketData.map(asset => {
+                const signal = getMarketSignal(asset.change24h);
+                return (
+                  <tr key={asset.id}>
+                    <td><strong>{asset.name}</strong> <span className="badge">{asset.ticker}</span></td>
+                    <td>${asset.price}</td>
+                    <td style={{color: parseFloat(asset.change24h) >= 0 ? '#10b981' : '#ef4444', fontWeight: 'bold'}}>
+                      {parseFloat(asset.change24h) > 0 ? '+' : ''}{asset.change24h}%
+                    </td>
+                    <td>{formatCompactVolume(asset.volume)}</td>
+                    <td>
+                      <span className={`signal-tag ${signal.tone}`}>
+                        {signal.label}
+                      </span>
+                    </td>
+                    <td style={{color: parseFloat(asset.funding) >= 0 ? '#10b981' : '#ef4444'}}>{asset.funding}</td>
+                    <td><button className="btn-primary" style={{padding: '6px 12px', fontSize: '0.85rem'}} onClick={() => handleAddAsset(asset)}>+ Tracker</button></td>
+                  </tr>
+                );
+              })}
+              {marketData.length === 0 && <tr><td colSpan="7" style={{textAlign:'center'}}>No data available</td></tr>}
             </tbody>
           </table>
 
