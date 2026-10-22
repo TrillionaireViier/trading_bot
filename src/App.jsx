@@ -12,7 +12,10 @@ import Papa from 'papaparse';
 import ScreenRecorder from './components/ScreenRecorder';
 import './App.css';
 
-// Mock Data
+const AUTH_STORAGE_KEY = 'trading_auth_session_v1';
+const USERS_STORAGE_KEY = 'trading_users_v1';
+const DEMO_ADMIN = { id: 'admin', username: 'admin', password: 'admin123', role: 'admin', name: 'Site Admin' };
+
 const MOCK_CHART_DATA = [
   { name: 'Jan', value: 4000 }, { name: 'Feb', value: 3000 }, { name: 'Mar', value: 5000 },
   { name: 'Apr', value: 4500 }, { name: 'May', value: 6000 }, { name: 'Jun', value: 5500 }
@@ -144,15 +147,15 @@ const safeWriteStorage = (key, value) => {
 const parseNumericList = (value, fallback = []) => {
   if (Array.isArray(value)) {
     return value
-      .map(item => Number(item))
-      .filter(item => Number.isFinite(item));
+      .map((item) => Number(item))
+      .filter((item) => Number.isFinite(item));
   }
 
   if (typeof value === 'string') {
     return value
       .split(',')
-      .map(item => Number(item.trim()))
-      .filter(item => Number.isFinite(item));
+      .map((item) => Number(item.trim()))
+      .filter((item) => Number.isFinite(item));
   }
 
   return fallback;
@@ -171,6 +174,41 @@ const normalizeBingXSettings = (saved = {}) => ({
   conditionalOrders: Array.isArray(saved.conditionalOrders) && saved.conditionalOrders.length > 0
     ? saved.conditionalOrders
     : [{ type: 'STOP', triggerPercent: -2.5, side: 'SELL', quantity: '0.01' }]
+});
+
+const buildUserStorageKey = (userId, prefix) => (userId ? `${prefix}_${userId}` : `${prefix}_guest`);
+
+const seedUsers = () => {
+  const currentUsers = safeReadStorage(USERS_STORAGE_KEY, [], (value) => JSON.parse(value));
+  const users = Array.isArray(currentUsers) && currentUsers.length > 0 ? currentUsers : [DEMO_ADMIN];
+
+  const adminExists = users.some((u) => u.username === 'admin');
+  if (!adminExists) {
+    users.unshift(DEMO_ADMIN);
+  }
+
+  safeWriteStorage(USERS_STORAGE_KEY, users);
+  return users;
+};
+
+const getTradeSizeUsd = (accountBalanceUsd) => {
+  const fixed = 2;
+  const amount = Number(accountBalanceUsd || 0) * 0.00002;
+  return Math.min(fixed, amount);
+};
+
+const shouldReverse = (pnlPct) => {
+  const pnl = Number(pnlPct || 0);
+  return pnl >= 14 || pnl <= -14;
+};
+
+const getReverseSide = (side) => (side === 'BUY' ? 'SELL' : 'BUY');
+
+const buildReverseOrder = ({ symbol, currentSide, accountBalanceUsd }) => ({
+  symbol,
+  side: getReverseSide(currentSide),
+  sizeUsd: getTradeSizeUsd(accountBalanceUsd),
+  reverseTriggerPct: 14,
 });
 
 const MarketView = ({ assets, setAssets, notify, addLog }) => {
@@ -197,25 +235,25 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
         const res = await fetch('https://api.binance.com/api/v3/ticker/24hr');
         const data = await res.json();
         const formatted = data
-          .filter(d => d.symbol.endsWith('USDT'))
+          .filter((d) => d.symbol.endsWith('USDT'))
           .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
           .slice(0, 100)
-          .map(d => ({
+          .map((d) => ({
             id: d.symbol, name: d.symbol.replace('USDT', ''), ticker: d.symbol.replace('USDT', ''),
             price: parseFloat(d.lastPrice).toFixed(4), change24h: parseFloat(d.priceChangePercent).toFixed(2),
             funding: (Math.random() * 0.02 - 0.01).toFixed(4) + '%',
             volume: Number(d.quoteVolume) || 0,
-            type: 'Crypto', source: tab === 'bingx' ? 'BingX (proxy fallback)' : 'Binance'
+            type: 'Crypto', source: tab === 'bingx' ? 'BingX proxy fallback' : 'Binance'
           }));
         setMarketData(formatted);
       } else if (tab === 'bybit') {
         const res = await fetch('https://api.bybit.com/v5/market/tickers?category=spot');
         const data = await res.json();
         const formatted = data.result.list
-          .filter(d => d.symbol.endsWith('USDT'))
+          .filter((d) => d.symbol.endsWith('USDT'))
           .sort((a, b) => parseFloat(b.turnover24h) - parseFloat(a.turnover24h))
           .slice(0, 100)
-          .map(d => ({
+          .map((d) => ({
             id: d.symbol, name: d.symbol.replace('USDT', ''), ticker: d.symbol.replace('USDT', ''),
             price: parseFloat(d.lastPrice).toFixed(4), change24h: (parseFloat(d.price24hPcnt) * 100).toFixed(2),
             funding: (Math.random() * 0.02 - 0.01).toFixed(4) + '%',
@@ -227,7 +265,7 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
         const startIndex = isLoadMore ? loadedCount : 0;
         const symbolsToFetch = ALL_STOCKS.slice(startIndex, limit);
 
-        const formatted = await Promise.all(symbolsToFetch.map(async sym => {
+        const formatted = await Promise.all(symbolsToFetch.map(async (sym) => {
           const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=d9s6frpr01qoo7o6rp6gd9s6frpr01qoo7o6rp70`);
           const data = await res.json();
           if (data.error) {
@@ -239,13 +277,13 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
           return { id: sym, name: sym, ticker: sym, price: parseFloat(data.c).toFixed(2), change24h: change.toFixed(2), funding: '-', volume: Math.random() * 5000000 + 200000, type: 'Stock', source: 'Finnhub' };
         }));
 
-        if (isLoadMore) setMarketData(prev => [...prev, ...formatted]);
+        if (isLoadMore) setMarketData((prev) => [...prev, ...formatted]);
         else setMarketData(formatted);
       } else if (tab === 'gold') {
         const startIndex = isLoadMore ? loadedCount : 0;
         const symbolsToFetch = ALL_COMMODITIES.slice(startIndex, limit);
 
-        const formatted = await Promise.all(symbolsToFetch.map(async s => {
+        const formatted = await Promise.all(symbolsToFetch.map(async (s) => {
           const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${s.sym}&token=d9s6frpr01qoo7o6rp6gd9s6frpr01qoo7o6rp70`);
           const data = await res.json();
           if (!data || data.error || data.c === 0) {
@@ -258,13 +296,13 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
         }));
 
         const validFormatted = formatted.filter(Boolean);
-        if (isLoadMore) setMarketData(prev => [...prev, ...validFormatted]);
+        if (isLoadMore) setMarketData((prev) => [...prev, ...validFormatted]);
         else setMarketData(validFormatted);
       } else {
         const MOCK_TICKERS = ['BTC', 'ETH', 'SOL', 'XRP', 'ADA', 'AVAX', 'DOGE', 'DOT', 'LINK', 'MATIC', 'SHIB', 'LTC', 'UNI', 'ATOM', 'ETC', 'XLM', 'ALGO', 'NEAR', 'VET', 'ICP'];
         const BASE_PRICES = { BTC: 65000, ETH: 3500, SOL: 140, XRP: 0.6, ADA: 0.45, AVAX: 35, DOGE: 0.15, DOT: 7, LINK: 18, MATIC: 0.7, SHIB: 0.000025, LTC: 80, UNI: 10, ATOM: 18, ETC: 25, XLM: 0.12, ALGO: 0.35, NEAR: 5, VET: 0.04, ICP: 7 };
 
-        const formatted = MOCK_TICKERS.map(ticker => {
+        const formatted = MOCK_TICKERS.map((ticker) => {
           const basePrice = BASE_PRICES[ticker];
           const priceNoise = basePrice * (Math.random() * 0.002 - 0.001);
           const currentPrice = basePrice + priceNoise;
@@ -282,7 +320,7 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
           };
         });
 
-        await new Promise(resolve => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, 300));
         setMarketData(formatted);
       }
     } catch (e) {
@@ -303,10 +341,10 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
   };
 
   const handleAddAsset = (asset) => {
-    if (assets.find(a => a.ticker === asset.ticker)) {
+    if (assets.find((a) => a.ticker === asset.ticker)) {
       return notify(`${asset.ticker} is already in your assets!`, 'info');
     }
-    setAssets([{id: Date.now(), name: asset.name, ticker: asset.ticker, price: asset.price, type: asset.type, date: new Date().toLocaleDateString()}, ...assets]);
+    setAssets([{ id: Date.now(), name: asset.name, ticker: asset.ticker, price: asset.price, type: asset.type, date: new Date().toLocaleDateString() }, ...assets]);
     addLog('Added Asset', `${asset.name} from Market`);
     notify(`Added ${asset.ticker} to Tracker!`, 'success');
   };
@@ -316,47 +354,47 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
     .slice(0, 4);
 
   return (
-    <div className="market-layout" style={{display: 'flex', flexDirection: 'column', gap: '20px', height: '100%', alignItems: 'stretch'}}>
-      <div className="market-sidebar" style={{width: '100%', background: 'var(--bg-primary)', borderRadius: '12px', padding: '16px'}}>
-        <h3 style={{marginBottom: '16px', fontSize: '1.1rem'}}>Markets</h3>
-        <ul style={{listStyle: 'none', padding: 0, margin: 0, display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '8px'}}>
-          {MARKET_TABS.map(t => (
-            <li key={t.id} onClick={() => setActiveTab(t.id)} style={{padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: activeTab === t.id ? 'var(--accent-color)' : 'transparent', border: activeTab === t.id ? '1px solid var(--accent-color)' : '1px solid var(--border-color)', color: 'var(--text-primary)', fontWeight: activeTab === t.id ? 700 : 500}}>
+    <div className="market-layout" style={{ display: 'flex', flexDirection: 'column', gap: '20px', height: '100%', alignItems: 'stretch' }}>
+      <div className="market-sidebar" style={{ width: '100%', background: 'var(--bg-primary)', borderRadius: '12px', padding: '16px' }}>
+        <h3 style={{ marginBottom: '16px', fontSize: '1.1rem' }}>Markets</h3>
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '8px' }}>
+          {MARKET_TABS.map((t) => (
+            <li key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: activeTab === t.id ? 'var(--accent-color)' : 'transparent', border: activeTab === t.id ? '1px solid var(--accent-color)' : '1px solid var(--border-color)', color: 'var(--text-primary)', fontWeight: activeTab === t.id ? 700 : 500 }}>
               {t.label}
             </li>
           ))}
         </ul>
       </div>
 
-      <div className="market-content" style={{flex: 1, background: 'var(--bg-primary)', borderRadius: '12px', padding: '20px', overflowY: 'auto'}}>
-        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px'}}>
+      <div className="market-content" style={{ flex: 1, background: 'var(--bg-primary)', borderRadius: '12px', padding: '20px', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <h2>Top Volatility ({activeTab.toUpperCase()})</h2>
           <button className="btn-secondary" onClick={() => fetchMarketData(activeTab)}>🔄 Refresh</button>
         </div>
 
         {topMovers.length > 0 && (
-          <div style={{marginBottom: '20px'}}>
-            <h3 style={{marginBottom: '12px', fontSize: '1rem'}}>Top Movers</h3>
-            <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px'}}>
-              {topMovers.map(asset => {
+          <div style={{ marginBottom: '20px' }}>
+            <h3 style={{ marginBottom: '12px', fontSize: '1rem' }}>Top Movers</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+              {topMovers.map((asset) => {
                 const signal = getMarketSignal(asset.change24h);
                 const momentum = calculateMomentum(asset.change24h, asset.volume);
                 return (
-                  <div key={asset.id} style={{background: 'rgba(148, 163, 184, 0.08)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px'}}>
-                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
+                  <div key={asset.id} style={{ background: 'rgba(148, 163, 184, 0.08)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                       <strong>{asset.name}</strong>
                       <span className="badge">{asset.ticker}</span>
                     </div>
-                    <div style={{fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '8px'}}>
+                    <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
                       {asset.change24h > 0 ? '+' : ''}{asset.change24h}%
                     </div>
-                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px'}}>
-                      <span style={{fontSize: '0.8rem'}}>Vol</span>
-                      <span style={{fontSize: '0.8rem'}}>{formatCompactVolume(asset.volume)}</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '0.8rem' }}>Vol</span>
+                      <span style={{ fontSize: '0.8rem' }}>{formatCompactVolume(asset.volume)}</span>
                     </div>
-                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px'}}>
-                      <span style={{padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: signal.tone === 'overbought' ? 'rgba(16,185,129,0.15)' : signal.tone === 'oversold' ? 'rgba(239,68,68,0.15)' : 'rgba(148,163,184,0.15)', color: signal.tone === 'overbought' ? '#10b981' : signal.tone === 'oversold' ? '#ef4444' : '#cbd5e1'}}>{signal.label}</span>
-                      <span style={{padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: momentum.tone === 'bullish' ? 'rgba(56,189,248,0.15)' : momentum.tone === 'bearish' ? 'rgba(168,85,247,0.15)' : 'rgba(148,163,184,0.15)', color: momentum.tone === 'bullish' ? '#7dd3fc' : momentum.tone === 'bearish' ? '#c4b5fd' : '#cbd5e1'}}>{momentum.label}</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: signal.tone === 'overbought' ? 'rgba(16,185,129,0.15)' : signal.tone === 'oversold' ? 'rgba(239,68,68,0.15)' : 'rgba(148,163,184,0.15)', color: signal.tone === 'overbought' ? '#10b981' : signal.tone === 'oversold' ? '#ef4444' : '#cbd5e1' }}>{signal.label}</span>
+                      <span style={{ padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: momentum.tone === 'bullish' ? 'rgba(56,189,248,0.15)' : momentum.tone === 'bearish' ? 'rgba(168,85,247,0.15)' : 'rgba(148,163,184,0.15)', color: momentum.tone === 'bullish' ? '#7dd3fc' : momentum.tone === 'bearish' ? '#c4b5fd' : '#cbd5e1' }}>{momentum.label}</span>
                     </div>
                   </div>
                 );
@@ -366,46 +404,46 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
         )}
 
         {loadingMarket ? (
-          <div style={{textAlign: 'center', padding: '40px'}}><div className="spinner"></div></div>
+          <div style={{ textAlign: 'center', padding: '40px' }}><div className="spinner"></div></div>
         ) : (
           <div className="table-wrapper"><table className="data-table">
             <thead>
               <tr><th>Asset</th><th>Price</th><th>24h Volatility</th><th>Volume</th><th>Signal</th><th>Momentum</th><th>Funding</th><th>Action</th></tr>
             </thead>
             <tbody>
-              {marketData.map(asset => {
+              {marketData.map((asset) => {
                 const signal = getMarketSignal(asset.change24h);
                 const momentum = calculateMomentum(asset.change24h, asset.volume);
                 return (
                   <tr key={asset.id}>
                     <td><strong>{asset.name}</strong> <span className="badge">{asset.ticker}</span></td>
                     <td>${asset.price}</td>
-                    <td style={{color: parseFloat(asset.change24h) >= 0 ? '#10b981' : '#ef4444', fontWeight: 'bold'}}>
+                    <td style={{ color: parseFloat(asset.change24h) >= 0 ? '#10b981' : '#ef4444', fontWeight: 'bold' }}>
                       {parseFloat(asset.change24h) > 0 ? '+' : ''}{asset.change24h}%
                     </td>
                     <td>{formatCompactVolume(asset.volume)}</td>
                     <td>
-                      <span style={{padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: signal.tone === 'overbought' ? 'rgba(16,185,129,0.15)' : signal.tone === 'oversold' ? 'rgba(239,68,68,0.15)' : 'rgba(148,163,184,0.15)', color: signal.tone === 'overbought' ? '#10b981' : signal.tone === 'oversold' ? '#ef4444' : '#cbd5e1'}}>
+                      <span style={{ padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: signal.tone === 'overbought' ? 'rgba(16,185,129,0.15)' : signal.tone === 'oversold' ? 'rgba(239,68,68,0.15)' : 'rgba(148,163,184,0.15)', color: signal.tone === 'overbought' ? '#10b981' : signal.tone === 'oversold' ? '#ef4444' : '#cbd5e1' }}>
                         {signal.label}
                       </span>
                     </td>
                     <td>
-                      <div style={{display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start'}}>
-                        <span style={{padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: momentum.tone === 'bullish' ? 'rgba(56,189,248,0.15)' : momentum.tone === 'bearish' ? 'rgba(168,85,247,0.15)' : 'rgba(148,163,184,0.15)', color: momentum.tone === 'bullish' ? '#7dd3fc' : momentum.tone === 'bearish' ? '#c4b5fd' : '#cbd5e1'}}>{momentum.label}</span>
-                        <small style={{color: 'var(--text-secondary)'}}>{momentum.score}</small>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                        <span style={{ padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: momentum.tone === 'bullish' ? 'rgba(56,189,248,0.15)' : momentum.tone === 'bearish' ? 'rgba(168,85,247,0.15)' : 'rgba(148,163,184,0.15)', color: momentum.tone === 'bullish' ? '#7dd3fc' : momentum.tone === 'bearish' ? '#c4b5fd' : '#cbd5e1' }}>{momentum.label}</span>
+                        <small style={{ color: 'var(--text-secondary)' }}>{momentum.score}</small>
                       </div>
                     </td>
-                    <td style={{color: parseFloat(asset.funding) >= 0 ? '#10b981' : '#ef4444'}}>{asset.funding}</td>
-                    <td><button className="btn-primary" style={{padding: '6px 12px', fontSize: '0.85rem'}} onClick={() => handleAddAsset(asset)}>+ Tracker</button></td>
+                    <td style={{ color: parseFloat(asset.funding) >= 0 ? '#10b981' : '#ef4444' }}>{asset.funding}</td>
+                    <td><button className="btn-primary" style={{ padding: '6px 12px', fontSize: '0.85rem' }} onClick={() => handleAddAsset(asset)}>+ Tracker</button></td>
                   </tr>
                 );
               })}
-              {marketData.length === 0 && <tr><td colSpan="8" style={{textAlign:'center'}}>No data available</td></tr>}
+              {marketData.length === 0 && <tr><td colSpan="8" style={{ textAlign: 'center' }}>No data available</td></tr>}
             </tbody>
           </table>
 
           {(activeTab === 'stocks' || activeTab === 'gold') && (
-            <div style={{textAlign: 'center', marginTop: '20px'}}>
+            <div style={{ textAlign: 'center', marginTop: '20px' }}>
               <button
                 className="btn-secondary"
                 onClick={handleLoadMore}
@@ -423,30 +461,41 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
 };
 
 function App() {
+  const [users, setUsers] = useState(() => seedUsers());
+  const [activeUserId, setActiveUserId] = useState(() => {
+    const session = safeReadStorage(AUTH_STORAGE_KEY, null, (value) => JSON.parse(value));
+    return session?.userId || null;
+  });
+  const [authMode, setAuthMode] = useState('login');
+  const [authForm, setAuthForm] = useState({ username: '', password: '', role: 'user', name: '' });
   const [loading, setLoading] = useState(true);
   const location = useLocation();
   const activeTab = location.pathname.substring(1) || 'dashboard';
 
-  // Theme & Language
+  const currentUser = users.find((u) => u.id === activeUserId) || null;
+  const isAdmin = currentUser?.role === 'admin';
+
+  const userSettingsKey = buildUserStorageKey(activeUserId, 'trading_settings');
+  const userAssetKey = buildUserStorageKey(activeUserId, 'trading_assets_v2');
+  const userLogsKey = buildUserStorageKey(activeUserId, 'trading_logs');
+
   const [theme, setTheme] = useState(() => safeReadStorage('theme', 'dark'));
   const [lang, setLang] = useState(() => safeReadStorage('lang', 'en'));
-
-  // Layout
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Data
   const [assets, setAssets] = useState(() => {
-    const saved = safeReadStorage('trading_assets_v2', null, (value) => JSON.parse(value));
+    const storageKey = userAssetKey;
+    const saved = safeReadStorage(storageKey, null, (value) => JSON.parse(value));
     const fallback = [{ id: Date.now(), name: "Wendy's", ticker: 'WEN', price: '0', type: 'Stock', date: new Date().toLocaleDateString() }];
     const parsed = Array.isArray(saved) ? saved : fallback;
-    return parsed.map(a => (a && (a.price === 'NaN' || Number.isNaN(a.price)) ? { ...a, price: '0' } : a));
+    return parsed.map((a) => (a && (a.price === 'NaN' || Number.isNaN(a.price)) ? { ...a, price: '0' } : a));
   });
+
   const [logs, setLogs] = useState(() => {
-    const saved = safeReadStorage('trading_logs', [], (value) => JSON.parse(value));
+    const saved = safeReadStorage(userLogsKey, [], (value) => JSON.parse(value));
     return Array.isArray(saved) ? saved : [];
   });
 
-  // Table state
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
   const [currentPage, setCurrentPage] = useState(1);
@@ -454,14 +503,12 @@ function App() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [editingId, setEditingId] = useState(null);
 
-  // Auto-Pilot
   const [autoPilot, setAutoPilot] = useState(false);
   const autoPilotRef = useRef(autoPilot);
   useEffect(() => {
     autoPilotRef.current = autoPilot;
   }, [autoPilot]);
 
-  // Modals
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newAsset, setNewAsset] = useState({ name: '', ticker: '', price: '', type: 'Crypto' });
@@ -471,9 +518,8 @@ function App() {
   const [assetsToPublish, setAssetsToPublish] = useState([]);
   const [selectedTgChannels, setSelectedTgChannels] = useState([]);
 
-  // Forms & Settings
   const [settings, setSettings] = useState(() => {
-    const saved = safeReadStorage('trading_settings', {}, (value) => JSON.parse(value));
+    const saved = safeReadStorage(userSettingsKey, {}, (value) => JSON.parse(value));
     const channels = Array.isArray(saved.tgChannels) ? saved.tgChannels : [];
     if (channels.length === 0 && saved.tgChatId && saved.tgBotToken) {
       channels.push({ id: 1, name: 'Default Channel', chatId: saved.tgChatId, botToken: saved.tgBotToken });
@@ -481,16 +527,44 @@ function App() {
     return {
       tgChannels: channels,
       msgTemplate: saved.msgTemplate || '🚀 ALERT: {name} ({ticker}) just pumped to ${price}!\nTime to short? 📉',
-      bingx: normalizeBingXSettings(saved.bingx || {})
+      bingx: normalizeBingXSettings(saved.bingx || {}),
+      strategy: {
+        tradeSizeMode: saved.strategy?.tradeSizeMode || 'account_percent',
+        fixedTradeUsd: saved.strategy?.fixedTradeUsd ?? 2,
+        percentOfAccount: saved.strategy?.percentOfAccount ?? 0.002,
+        reverseTriggerPct: saved.strategy?.reverseTriggerPct ?? 14,
+        enabled: saved.strategy?.enabled ?? true
+      }
     };
   });
+
   const [notifications, setNotifications] = useState([]);
 
   const fileInputRef = useRef(null);
   const t = TRANSLATIONS[lang] || TRANSLATIONS.en;
 
+  useEffect(() => {
+    if (!activeUserId) return;
+    safeWriteStorage(AUTH_STORAGE_KEY, JSON.stringify({ userId: activeUserId }));
+  }, [activeUserId]);
+
+  useEffect(() => {
+    if (!activeUserId) return;
+    safeWriteStorage(userAssetKey, JSON.stringify(assets));
+  }, [assets, activeUserId, userAssetKey]);
+
+  useEffect(() => {
+    if (!activeUserId) return;
+    safeWriteStorage(userLogsKey, JSON.stringify(logs));
+  }, [logs, activeUserId, userLogsKey]);
+
+  useEffect(() => {
+    if (!activeUserId) return;
+    safeWriteStorage(userSettingsKey, JSON.stringify(settings));
+  }, [settings, activeUserId, userSettingsKey]);
+
   const buildBingXPayload = () => {
-    const defaultSymbol = assets.find(a => a.type === 'Crypto')?.ticker || settings.bingx.symbol || 'BTC';
+    const defaultSymbol = assets.find((a) => a.type === 'Crypto')?.ticker || settings.bingx.symbol || 'BTC';
     const symbol = (settings.bingx.symbol || defaultSymbol).toUpperCase();
     const quantity = Number(settings.bingx.quantity || '0.01');
     const side = (settings.bingx.side || 'BUY').toUpperCase();
@@ -536,7 +610,53 @@ function App() {
     }
   };
 
-  // Lifecycle
+  const authSubmit = () => {
+    const username = authForm.username.trim();
+    const password = authForm.password.trim();
+    if (!username || !password) {
+      notify('Username and password required', 'error');
+      return;
+    }
+
+    if (authMode === 'login') {
+      const user = users.find((u) => u.username.toLowerCase() === username.toLowerCase() && u.password === password);
+      if (!user) {
+        notify('Invalid login. Use admin/admin123 or create new user.', 'error');
+        return;
+      }
+      setActiveUserId(user.id);
+      notify(`Welcome back, ${user.username}!`, 'success');
+      return;
+    }
+
+    const exists = users.some((u) => u.username.toLowerCase() === username.toLowerCase());
+    if (exists) {
+      notify('User already exists', 'error');
+      return;
+    }
+
+    const role = authForm.role === 'admin' ? 'admin' : 'user';
+    const user = {
+      id: `user_${Date.now()}`,
+      username,
+      password,
+      role,
+      name: authForm.name || username,
+    };
+
+    const nextUsers = [...users, user];
+    setUsers(nextUsers);
+    setActiveUserId(user.id);
+    safeWriteStorage(USERS_STORAGE_KEY, JSON.stringify(nextUsers));
+    notify(`${username} registered successfully`, 'success');
+  };
+
+  const handleLogout = () => {
+    setActiveUserId(null);
+    safeWriteStorage(AUTH_STORAGE_KEY, JSON.stringify({ userId: null }));
+    notify('Logged out', 'info');
+  };
+
   useEffect(() => {
     setTimeout(() => setLoading(false), 800);
 
@@ -563,20 +683,14 @@ function App() {
     safeWriteStorage('theme', theme);
   }, [theme]);
 
-  useEffect(() => {
-    safeWriteStorage('trading_assets_v2', JSON.stringify(assets));
-    safeWriteStorage('trading_logs', JSON.stringify(logs));
-    safeWriteStorage('trading_settings', JSON.stringify(settings));
-  }, [assets, logs, settings]);
-
   const addLog = (action, details) => {
-    setLogs(prev => [{ id: Date.now(), time: new Date().toLocaleTimeString(), action, details }, ...prev].slice(0, 50));
+    setLogs((prev) => [{ id: Date.now(), time: new Date().toLocaleTimeString(), action, details }, ...prev].slice(0, 50));
   };
 
   const notify = (msg, type = 'info') => {
     const id = Date.now();
-    setNotifications(prev => [...prev, { id, msg, type }]);
-    setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 4000);
+    setNotifications((prev) => [...prev, { id, msg, type }]);
+    setTimeout(() => setNotifications((prev) => prev.filter((n) => n.id !== id)), 4000);
   };
 
   const fetchLivePrice = async (ticker, type) => {
@@ -631,7 +745,7 @@ function App() {
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ chat_id: channel.chatId, text })
                     });
-                  } catch(e) {}
+                  } catch (e) { }
                 });
               }
             }
@@ -686,11 +800,11 @@ function App() {
       Papa.parse(file, {
         header: true,
         complete: (results) => {
-          const imported = results.data.filter(r => r.name && r.ticker).map(r => ({
+          const imported = results.data.filter((r) => r.name && r.ticker).map((r) => ({
             id: Date.now() + Math.random(),
             name: r.name, ticker: r.ticker, price: r.price || '0', type: r.type || 'Crypto', date: new Date().toLocaleDateString()
           }));
-          setAssets(prev => [...imported, ...prev]);
+          setAssets((prev) => [...imported, ...prev]);
           addLog('Imported CSV', `Imported ${imported.length} assets`);
           notify(`Imported ${imported.length} assets`, 'success');
         }
@@ -710,7 +824,7 @@ function App() {
   };
 
   const handleBackup = () => {
-    const data = { assets, logs, settings };
+    const data = { assets, logs, settings, user: currentUser };
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -728,7 +842,7 @@ function App() {
   };
 
   const confirmDelete = () => {
-    setAssets(assets.filter(a => !selectedIds.includes(a.id)));
+    setAssets(assets.filter((a) => !selectedIds.includes(a.id)));
     addLog('Batch Delete', `Deleted ${selectedIds.length} assets`);
     setSelectedIds([]);
     setShowDeleteModal(false);
@@ -739,10 +853,10 @@ function App() {
     if (settings.tgChannels.length === 0) {
       return notify('Configure at least 1 Telegram Channel in Settings first!', 'error');
     }
-    const toPublish = assets.filter(a => selectedIds.includes(a.id));
+    const toPublish = assets.filter((a) => selectedIds.includes(a.id));
     if (toPublish.length === 0) return;
     setAssetsToPublish(toPublish);
-    setSelectedTgChannels(settings.tgChannels.map(c => c.id));
+    setSelectedTgChannels(settings.tgChannels.map((c) => c.id));
     setShowTgModal(true);
   };
 
@@ -753,7 +867,7 @@ function App() {
 
     let sentCount = 0;
     for (const channelId of selectedTgChannels) {
-      const channel = settings.tgChannels.find(c => c.id === channelId);
+      const channel = settings.tgChannels.find((c) => c.id === channelId);
       if (!channel || !channel.botToken) continue;
 
       for (const asset of assetsToPublish) {
@@ -780,7 +894,7 @@ function App() {
   };
 
   const filteredAssets = assets
-    .filter(a => a.name.toLowerCase().includes(searchQuery.toLowerCase()) || a.ticker.toLowerCase().includes(searchQuery.toLowerCase()))
+    .filter((a) => a.name.toLowerCase().includes(searchQuery.toLowerCase()) || a.ticker.toLowerCase().includes(searchQuery.toLowerCase()))
     .sort((a, b) => {
       if (a[sortConfig.key] < b[sortConfig.key]) return sortConfig.direction === 'asc' ? -1 : 1;
       if (a[sortConfig.key] > b[sortConfig.key]) return sortConfig.direction === 'asc' ? 1 : -1;
@@ -788,6 +902,59 @@ function App() {
     });
 
   const paginatedAssets = filteredAssets.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  if (!currentUser) {
+    return (
+      <div className={`auth-shell ${theme}`} style={{ minHeight: '100vh', background: 'var(--bg-primary)', color: 'var(--text-primary)', display: 'grid', placeItems: 'center', padding: '24px' }}>
+        <div className="auth-card" style={{ width: '100%', maxWidth: '420px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '18px', boxShadow: '0 20px 40px rgba(0,0,0,0.25)', padding: '28px' }}>
+          <div style={{ textAlign: 'center', marginBottom: '18px' }}>
+            <h2 style={{ margin: 0 }}>Trading Enterprise</h2>
+            <small style={{ color: 'var(--text-secondary)' }}>Admin/User access</small>
+          </div>
+
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
+            <button className={authMode === 'login' ? 'btn-primary' : 'btn-secondary'} style={{ flex: 1 }} onClick={() => setAuthMode('login')}>Login</button>
+            <button className={authMode === 'register' ? 'btn-primary' : 'btn-secondary'} style={{ flex: 1 }} onClick={() => setAuthMode('register')}>Register</button>
+          </div>
+
+          <div style={{ display: 'grid', gap: '12px' }}>
+            {authMode === 'register' && (
+              <div className="form-group">
+                <label>Display name</label>
+                <input type="text" value={authForm.name} onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })} placeholder="John" />
+              </div>
+            )}
+
+            <div className="form-group">
+              <label>Username</label>
+              <input type="text" value={authForm.username} onChange={(e) => setAuthForm({ ...authForm, username: e.target.value })} placeholder="admin or trader" />
+            </div>
+
+            <div className="form-group">
+              <label>Password</label>
+              <input type="password" value={authForm.password} onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })} placeholder="••••••••" />
+            </div>
+
+            {authMode === 'register' && (
+              <div className="form-group">
+                <label>Role</label>
+                <select value={authForm.role} onChange={(e) => setAuthForm({ ...authForm, role: e.target.value })} style={{ width: '100%', padding: '12px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '8px' }}>
+                  <option value="user">User</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+            )}
+
+            <button className="btn-primary" style={{ width: '100%' }} onClick={authSubmit}>{authMode === 'login' ? 'Sign In' : 'Create Account'}</button>
+          </div>
+
+          <div style={{ marginTop: '18px', color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+            Demo admin: username <strong>admin</strong> / password <strong>admin123</strong>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -801,7 +968,7 @@ function App() {
   return (
     <div className={`app-container ${theme}`}>
       <div className="notifications-container">
-        {notifications.map(n => (
+        {notifications.map((n) => (
           <div key={n.id} className={`notification-toast ${n.type}`}>{n.msg}</div>
         ))}
       </div>
@@ -823,19 +990,19 @@ function App() {
       {showTgModal && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <div className="modal-icon" style={{background: 'rgba(56, 189, 248, 0.1)', color: '#38bdf8'}}><Send size={32} /></div>
+            <div className="modal-icon" style={{ background: 'rgba(56, 189, 248, 0.1)', color: '#38bdf8' }}><Send size={32} /></div>
             <h3>Select Channels</h3>
-            <p style={{marginBottom: '10px'}}>Publishing {assetsToPublish.length} assets to Telegram.</p>
-            <div style={{textAlign: 'left', marginBottom: '24px', maxHeight: '150px', overflowY: 'auto', padding: '10px', background: 'var(--bg-primary)', borderRadius: '8px'}}>
-              {settings.tgChannels.map(ch => (
-                <label key={ch.id} style={{display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0', cursor: 'pointer', borderBottom: '1px solid var(--border-color)'}}>
+            <p style={{ marginBottom: '10px' }}>Publishing {assetsToPublish.length} assets to Telegram.</p>
+            <div style={{ textAlign: 'left', marginBottom: '24px', maxHeight: '150px', overflowY: 'auto', padding: '10px', background: 'var(--bg-primary)', borderRadius: '8px' }}>
+              {settings.tgChannels.map((ch) => (
+                <label key={ch.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0', cursor: 'pointer', borderBottom: '1px solid var(--border-color)' }}>
                   <input type="checkbox" checked={selectedTgChannels.includes(ch.id)}
                     onChange={(e) => {
                       if (e.target.checked) setSelectedTgChannels([...selectedTgChannels, ch.id]);
-                      else setSelectedTgChannels(selectedTgChannels.filter(id => id !== ch.id));
+                      else setSelectedTgChannels(selectedTgChannels.filter((id) => id !== ch.id));
                     }}
                   />
-                  <span>{ch.name} <span style={{color: 'var(--text-secondary)', fontSize: '0.85rem'}}>({ch.chatId})</span></span>
+                  <span>{ch.name} <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>({ch.chatId})</span></span>
                 </label>
               ))}
             </div>
@@ -850,25 +1017,25 @@ function App() {
       {showAddChannelModal && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <div className="modal-icon" style={{background: 'rgba(56, 189, 248, 0.1)', color: '#38bdf8'}}><Send size={32} /></div>
+            <div className="modal-icon" style={{ background: 'rgba(56, 189, 248, 0.1)', color: '#38bdf8' }}><Send size={32} /></div>
             <h3>Add Bot & Channel</h3>
-            <div className="form-group" style={{textAlign: 'left', marginBottom: '16px'}}>
+            <div className="form-group" style={{ textAlign: 'left', marginBottom: '16px' }}>
               <label>Channel Name</label>
-              <input type="text" placeholder="e.g. VIP Signals" value={newChannel.name} onChange={e => setNewChannel({...newChannel, name: e.target.value})} />
+              <input type="text" placeholder="e.g. VIP Signals" value={newChannel.name} onChange={(e) => setNewChannel({ ...newChannel, name: e.target.value })} />
             </div>
-            <div className="form-group" style={{textAlign: 'left', marginBottom: '16px'}}>
+            <div className="form-group" style={{ textAlign: 'left', marginBottom: '16px' }}>
               <label>Chat ID</label>
-              <input type="text" placeholder="e.g. @mychannel or -100123..." value={newChannel.chatId} onChange={e => setNewChannel({...newChannel, chatId: e.target.value})} />
+              <input type="text" placeholder="e.g. @mychannel or -100123..." value={newChannel.chatId} onChange={(e) => setNewChannel({ ...newChannel, chatId: e.target.value })} />
             </div>
-            <div className="form-group" style={{textAlign: 'left', marginBottom: '24px'}}>
+            <div className="form-group" style={{ textAlign: 'left', marginBottom: '24px' }}>
               <label>Bot Token</label>
-              <input type="password" placeholder="From @BotFather" value={newChannel.botToken} onChange={e => setNewChannel({...newChannel, botToken: e.target.value})} />
+              <input type="password" placeholder="From @BotFather" value={newChannel.botToken} onChange={(e) => setNewChannel({ ...newChannel, botToken: e.target.value })} />
             </div>
             <div className="modal-actions">
               <button className="btn-secondary" onClick={() => setShowAddChannelModal(false)}>Cancel</button>
               <button className="btn-primary" onClick={() => {
                 if (newChannel.name && newChannel.chatId && newChannel.botToken) {
-                  setSettings({...settings, tgChannels: [...settings.tgChannels, {id: Date.now(), ...newChannel}]});
+                  setSettings({ ...settings, tgChannels: [...settings.tgChannels, { id: Date.now(), ...newChannel }] });
                   setShowAddChannelModal(false);
                   setNewChannel({ name: '', chatId: '', botToken: '' });
                   notify('Channel added successfully', 'success');
@@ -884,36 +1051,36 @@ function App() {
       {showAddModal && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <div className="modal-icon" style={{background: 'rgba(56, 189, 248, 0.1)', color: 'var(--accent-color)'}}><Plus size={32} /></div>
+            <div className="modal-icon" style={{ background: 'rgba(56, 189, 248, 0.1)', color: 'var(--accent-color)' }}><Plus size={32} /></div>
             <h3>Add New Asset</h3>
-            <div className="form-group" style={{textAlign: 'left', marginBottom: '16px'}}>
+            <div className="form-group" style={{ textAlign: 'left', marginBottom: '16px' }}>
               <label>Name</label>
-              <input type="text" placeholder="e.g. Bitcoin" value={newAsset.name} onChange={e => setNewAsset({...newAsset, name: e.target.value})} />
+              <input type="text" placeholder="e.g. Bitcoin" value={newAsset.name} onChange={(e) => setNewAsset({ ...newAsset, name: e.target.value })} />
             </div>
-            <div className="form-group" style={{textAlign: 'left', marginBottom: '16px'}}>
+            <div className="form-group" style={{ textAlign: 'left', marginBottom: '16px' }}>
               <label>Ticker</label>
-              <div style={{display: 'flex', gap: '8px'}}>
-                <input type="text" placeholder="e.g. BTC or AAPL" value={newAsset.ticker} onChange={e => setNewAsset({...newAsset, ticker: e.target.value})} style={{flex: 1}} />
-                <button className="btn-secondary" style={{padding: '0 12px'}} onClick={async () => {
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input type="text" placeholder="e.g. BTC or AAPL" value={newAsset.ticker} onChange={(e) => setNewAsset({ ...newAsset, ticker: e.target.value })} style={{ flex: 1 }} />
+                <button className="btn-secondary" style={{ padding: '0 12px' }} onClick={async () => {
                   if (!newAsset.ticker) return notify('Enter ticker first', 'error');
-                  setNewAsset({...newAsset, price: 'Fetching...'});
+                  setNewAsset({ ...newAsset, price: 'Fetching...' });
                   const price = await fetchLivePrice(newAsset.ticker, newAsset.type);
                   if (price) {
-                    setNewAsset({...newAsset, price});
+                    setNewAsset({ ...newAsset, price });
                     notify('Price updated!', 'success');
                   } else {
-                    setNewAsset({...newAsset, price: ''});
+                    setNewAsset({ ...newAsset, price: '' });
                   }
                 }}>Auto-fetch</button>
               </div>
             </div>
-            <div className="form-group" style={{textAlign: 'left', marginBottom: '16px'}}>
+            <div className="form-group" style={{ textAlign: 'left', marginBottom: '16px' }}>
               <label>Price ($)</label>
-              <input type="number" placeholder="e.g. 60000" value={newAsset.price} onChange={e => setNewAsset({...newAsset, price: e.target.value})} />
+              <input type="number" placeholder="e.g. 60000" value={newAsset.price} onChange={(e) => setNewAsset({ ...newAsset, price: e.target.value })} />
             </div>
-            <div className="form-group" style={{textAlign: 'left', marginBottom: '24px'}}>
+            <div className="form-group" style={{ textAlign: 'left', marginBottom: '24px' }}>
               <label>Type</label>
-              <select value={newAsset.type} onChange={e => setNewAsset({...newAsset, type: e.target.value})} style={{width: '100%', padding: '12px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '8px', outline: 'none'}}>
+              <select value={newAsset.type} onChange={(e) => setNewAsset({ ...newAsset, type: e.target.value })} style={{ width: '100%', padding: '12px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '8px', outline: 'none' }}>
                 <option value="Crypto">Crypto</option>
                 <option value="Stock">Stock</option>
               </select>
@@ -922,7 +1089,7 @@ function App() {
               <button className="btn-secondary" onClick={() => setShowAddModal(false)}>Cancel</button>
               <button className="btn-primary" onClick={() => {
                 if (newAsset.name && newAsset.ticker && newAsset.price) {
-                  setAssets([{id: Date.now(), ...newAsset, date: new Date().toLocaleDateString()}, ...assets]);
+                  setAssets([{ id: Date.now(), ...newAsset, date: new Date().toLocaleDateString() }, ...assets]);
                   addLog('Added Asset', newAsset.name);
                   setShowAddModal(false);
                   setNewAsset({ name: '', ticker: '', price: '', type: 'Crypto' });
@@ -942,8 +1109,8 @@ function App() {
           <button className="mobile-close" onClick={() => setSidebarOpen(false)}><X /></button>
         </div>
         <nav className="sidebar-nav">
-          {['dashboard', 'market', 'assets', 'analytics', 'logs', 'recorder', 'settings'].map(tab => (
-            <Link key={tab} to={`/${tab}`} className={`nav-item ${activeTab === tab ? 'active' : ''}`} onClick={() => setSidebarOpen(false)} style={{textDecoration: 'none'}}>
+          {['dashboard', 'market', 'assets', 'analytics', 'logs', 'recorder', 'settings'].map((tab) => (
+            <Link key={tab} to={`/${tab}`} className={`nav-item ${activeTab === tab ? 'active' : ''}`} onClick={() => setSidebarOpen(false)} style={{ textDecoration: 'none' }}>
               {t[tab]}
             </Link>
           ))}
@@ -953,6 +1120,7 @@ function App() {
             <div className={`status-dot ${settings.tgChannels.length > 0 ? 'active' : ''}`}></div>
             <span>{settings.tgChannels.length} Bots Connected</span>
           </div>
+          <button className="btn-secondary" style={{ marginTop: '16px', width: '100%' }} onClick={handleLogout}>Logout</button>
         </div>
       </aside>
 
@@ -962,7 +1130,7 @@ function App() {
             <button className="mobile-menu" onClick={() => setSidebarOpen(true)}><Menu /></button>
             <div className="search-box hidden-mobile">
               <Search size={18} />
-              <input id="searchInput" type="text" placeholder={t.search + " (Cmd+K)"} value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+              <input id="searchInput" type="text" placeholder={t.search + " (Cmd+K)"} value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
             </div>
           </div>
           <div className="topbar-right">
@@ -971,8 +1139,8 @@ function App() {
               {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
             </button>
             <div className="profile">
-              <div className="avatar" style={{background: 'linear-gradient(135deg, #38bdf8, #818cf8)', color: '#fff'}}>A</div>
-              <span style={{fontWeight: '600'}}>Admin</span>
+              <div className="avatar" style={{ background: 'linear-gradient(135deg, #38bdf8, #818cf8)', color: '#fff' }}>{currentUser.name ? currentUser.name.charAt(0).toUpperCase() : currentUser.username.charAt(0).toUpperCase()}</div>
+              <span style={{ fontWeight: '600' }}>{currentUser.name || currentUser.username}</span>
             </div>
           </div>
         </header>
@@ -992,7 +1160,7 @@ function App() {
                 <div className="widget stat-card">
                   <h3>Total Assets Tracking</h3>
                   <div className="stat-value">{assets.length}</div>
-                  <div className="stat-change text-muted">{assets.filter(a=>a.type==='Crypto').length} Cryptos / {assets.filter(a=>a.type==='Stock').length} Stocks</div>
+                  <div className="stat-change text-muted">{assets.filter((a) => a.type === 'Crypto').length} Cryptos / {assets.filter((a) => a.type === 'Stock').length} Stocks</div>
                 </div>
                 <div className="widget stat-card">
                   <h3>Fear & Greed Index</h3>
@@ -1002,7 +1170,7 @@ function App() {
                   </div>
                 </div>
 
-                <div className="widget chart-widget col-span-2" style={{padding: 0, overflow: 'hidden'}}>
+                <div className="widget chart-widget col-span-2" style={{ padding: 0, overflow: 'hidden' }}>
                   <iframe
                     src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_wen&symbol=NASDAQ%3AWEN&interval=D&symboledit=1&saveimage=1&toolbarbg=1e293b&studies=%5B%5D&theme=dark&withdateranges=1&allow_symbol_change=1"
                     width="100%"
@@ -1017,7 +1185,7 @@ function App() {
                 <div className="widget news-widget">
                   <h3>{t.news}</h3>
                   <div className="news-list">
-                    {MOCK_NEWS.map(news => (
+                    {MOCK_NEWS.map((news) => (
                       <div key={news.id} className="news-item">
                         <div className={`news-icon ${news.positive ? 'pos' : 'neg'}`}>
                           {news.positive ? <ArrowUpRight size={14}/> : <ArrowDownRight size={14}/>}
@@ -1041,7 +1209,7 @@ function App() {
                   <div className="toolbar-actions">
                     <button className="btn-primary" onClick={() => setShowAddModal(true)}><Plus size={16}/> Add New</button>
                     <button className="btn-secondary" onClick={handleRefreshAll}>🔄 Refresh Prices</button>
-                    <button className="btn-secondary" style={autoPilot ? {borderColor: '#10b981', color: '#10b981', background: 'rgba(16, 185, 129, 0.1)'} : {}} onClick={() => {
+                    <button className="btn-secondary" style={autoPilot ? { borderColor: '#10b981', color: '#10b981', background: 'rgba(16, 185, 129, 0.1)' } : {}} onClick={() => {
                       setAutoPilot(!autoPilot);
                       notify(autoPilot ? 'Auto-Pilot Disabled' : 'Auto-Pilot Enabled: Tracking every minute', autoPilot ? 'info' : 'success');
                     }}>
@@ -1055,7 +1223,7 @@ function App() {
                     )}
                   </div>
                   <div className="toolbar-tools">
-                    <input type="file" ref={fileInputRef} style={{display:'none'}} accept=".csv" onChange={handleImportCSV} />
+                    <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".csv" onChange={handleImportCSV} />
                     <button className="icon-btn" title="Import CSV" onClick={() => fileInputRef.current.click()}><Upload size={18}/></button>
                     <button className="icon-btn" title="Export CSV" onClick={handleExportCSV}><Download size={18}/></button>
                     <button className="icon-btn" title="Print PDF" onClick={handlePrint}><Printer size={18}/></button>
@@ -1069,30 +1237,30 @@ function App() {
                         <th>
                           <input type="checkbox"
                             checked={selectedIds.length === paginatedAssets.length && paginatedAssets.length > 0}
-                            onChange={(e) => setSelectedIds(e.target.checked ? paginatedAssets.map(a=>a.id) : [])}
+                            onChange={(e) => setSelectedIds(e.target.checked ? paginatedAssets.map((a) => a.id) : [])}
                           />
                         </th>
-                        <th onClick={() => setSortConfig({key: 'name', direction: sortConfig.direction === 'asc' ? 'desc' : 'asc'})}>Name ↕</th>
+                        <th onClick={() => setSortConfig({ key: 'name', direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' })}>Name ↕</th>
                         <th>Ticker</th>
-                        <th onClick={() => setSortConfig({key: 'price', direction: sortConfig.direction === 'asc' ? 'desc' : 'asc'})}>Price ↕</th>
+                        <th onClick={() => setSortConfig({ key: 'price', direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' })}>Price ↕</th>
                         <th>Type</th>
                         <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {paginatedAssets.map(asset => (
+                      {paginatedAssets.map((asset) => (
                         <tr key={asset.id} className={selectedIds.includes(asset.id) ? 'selected' : ''}>
                           <td>
                             <input type="checkbox" checked={selectedIds.includes(asset.id)}
-                              onChange={(e) => setSelectedIds(e.target.checked ? [...selectedIds, asset.id] : selectedIds.filter(id=>id!==asset.id))}
+                              onChange={(e) => setSelectedIds(e.target.checked ? [...selectedIds, asset.id] : selectedIds.filter((id) => id !== asset.id))}
                             />
                           </td>
                           <td>{editingId === asset.id ? <input defaultValue={asset.name} onBlur={(e) => {
-                            setAssets(assets.map(a => a.id === asset.id ? {...a, name: e.target.value} : a));
+                            setAssets(assets.map((a) => a.id === asset.id ? { ...a, name: e.target.value } : a));
                           }}/> : asset.name}</td>
                           <td><span className="badge">{asset.ticker}</span></td>
                           <td>{editingId === asset.id ? <input defaultValue={asset.price} onBlur={(e) => {
-                            setAssets(assets.map(a => a.id === asset.id ? {...a, price: e.target.value} : a));
+                            setAssets(assets.map((a) => a.id === asset.id ? { ...a, price: e.target.value } : a));
                           }}/> : `$${asset.price}`}</td>
                           <td><span className={`type-tag ${asset.type.toLowerCase()}`}>{asset.type}</span></td>
                           <td>
@@ -1104,10 +1272,10 @@ function App() {
                       ))}
                       {paginatedAssets.length === 0 && (
                         <tr>
-                          <td colSpan="6" style={{textAlign: 'center', padding: '40px', color: 'var(--text-secondary)'}}>
-                            <div style={{marginBottom: '10px'}}>No assets tracked yet. You can add them manually or from the Market Explorer.</div>
-                            <a href="https://coinmarketcap.com" target="_blank" rel="noreferrer" style={{color: 'var(--accent-color)', textDecoration: 'none', fontWeight: 'bold'}}>
-                              <ArrowUpRight size={14} style={{display: 'inline', verticalAlign: 'middle'}}/> Explore top crypto on CoinMarketCap
+                          <td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)' }}>
+                            <div style={{ marginBottom: '10px' }}>No assets tracked yet. You can add them manually or from the Market Explorer.</div>
+                            <a href="https://coinmarketcap.com" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-color)', textDecoration: 'none', fontWeight: 'bold' }}>
+                              <ArrowUpRight size={14} style={{ display: 'inline', verticalAlign: 'middle' }}/> Explore top crypto on CoinMarketCap
                             </a>
                           </td>
                         </tr>
@@ -1117,9 +1285,9 @@ function App() {
                 </div>
 
                 <div className="pagination">
-                  <button disabled={currentPage === 1} onClick={() => setCurrentPage(p=>p-1)}>Prev</button>
+                  <button disabled={currentPage === 1} onClick={() => setCurrentPage((p) => p - 1)}>Prev</button>
                   <span>Page {currentPage} of {Math.ceil(filteredAssets.length / itemsPerPage) || 1}</span>
-                  <button disabled={currentPage >= Math.ceil(filteredAssets.length / itemsPerPage)} onClick={() => setCurrentPage(p=>p+1)}>Next</button>
+                  <button disabled={currentPage >= Math.ceil(filteredAssets.length / itemsPerPage)} onClick={() => setCurrentPage((p) => p + 1)}>Next</button>
                 </div>
               </div>
             } />
@@ -1130,8 +1298,8 @@ function App() {
                 <div className="chart-wrapper">
                   <ResponsiveContainer width="100%" height={400}>
                     <PieChart>
-                      <Pie data={[{name: 'Crypto', value: 70}, {name: 'Stocks', value: 30}]} cx="50%" cy="50%" outerRadius={150} fill="#8884d8" dataKey="value" label>
-                        {[{name: 'Crypto'}, {name:'Stocks'}].map((entry, index) => <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />)}
+                      <Pie data={[{ name: 'Crypto', value: 70 }, { name: 'Stocks', value: 30 }]} cx="50%" cy="50%" outerRadius={150} fill="#8884d8" dataKey="value" label>
+                        {[{ name: 'Crypto' }, { name: 'Stocks' }].map((entry, index) => <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />)}
                       </Pie>
                       <Tooltip />
                       <Legend />
@@ -1145,7 +1313,7 @@ function App() {
               <div className="logs-view">
                 <h2>Activity Logs</h2>
                 <div className="logs-list">
-                  {logs.map(log => (
+                  {logs.map((log) => (
                     <div key={log.id} className="log-item">
                       <span className="log-time">{log.time}</span>
                       <span className="log-action">{log.action}</span>
@@ -1163,71 +1331,71 @@ function App() {
                   <div className="settings-card">
                     <h3>Telegram Integrations (Multi-Bot)</h3>
                     <h4>Connected Channels & Bots</h4>
-                    <div style={{display:'flex', flexDirection:'column', gap:'10px', marginBottom: '16px'}}>
-                      {settings.tgChannels.map(ch => (
-                        <div key={ch.id} style={{display:'flex', justifyContent:'space-between', background:'var(--bg-primary)', padding:'12px', border:'1px solid var(--border-color)', borderRadius:'8px'}}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+                      {settings.tgChannels.map((ch) => (
+                        <div key={ch.id} style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--bg-primary)', padding: '12px', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
                           <div>
                             <strong>{ch.name}</strong><br/>
                             <small className="text-muted">Chat: {ch.chatId}</small><br/>
                             <small className="text-muted">Bot: {ch.botToken ? '***' + ch.botToken.slice(-4) : 'Not set'}</small>
                           </div>
-                          <button style={{color:'var(--danger-color)', background:'transparent', border:'none', cursor:'pointer', padding:'8px'}} onClick={() => {
-                            setSettings({...settings, tgChannels: settings.tgChannels.filter(c => c.id !== ch.id)});
+                          <button style={{ color: 'var(--danger-color)', background: 'transparent', border: 'none', cursor: 'pointer', padding: '8px' }} onClick={() => {
+                            setSettings({ ...settings, tgChannels: settings.tgChannels.filter((c) => c.id !== ch.id) });
                           }}><Trash2 size={18}/></button>
                         </div>
                       ))}
                       {settings.tgChannels.length === 0 && <span className="text-muted">No bots added.</span>}
                     </div>
-                    <button className="btn-secondary" style={{width: '100%', justifyContent: 'center'}} onClick={() => setShowAddChannelModal(true)}><Plus size={16}/> Add Bot & Channel</button>
+                    <button className="btn-secondary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setShowAddChannelModal(true)}><Plus size={16}/> Add Bot & Channel</button>
                   </div>
 
                   <div className="settings-card">
                     <h3>BingX Trading Setup</h3>
-                    <div className="form-group" style={{marginBottom: '12px'}}>
+                    <div className="form-group" style={{ marginBottom: '12px' }}>
                       <label>Exchange</label>
-                      <select value={settings.bingx.market} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, market: e.target.value }})} style={{width:'100%', padding:'12px', background:'var(--bg-primary)', border:'1px solid var(--border-color)', color:'var(--text-primary)', borderRadius:'8px'}}>
+                      <select value={settings.bingx.market} onChange={(e) => setSettings({ ...settings, bingx: { ...settings.bingx, market: e.target.value } })} style={{ width: '100%', padding: '12px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '8px' }}>
                         <option value="spot">Spot</option>
                         <option value="swap">Swap</option>
                       </select>
                     </div>
-                    <div className="form-group" style={{marginBottom: '12px'}}>
+                    <div className="form-group" style={{ marginBottom: '12px' }}>
                       <label>API Key</label>
-                      <input type="text" value={settings.bingx.apiKey} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, apiKey: e.target.value }})} placeholder="BingX API key" />
+                      <input type="text" value={settings.bingx.apiKey} onChange={(e) => setSettings({ ...settings, bingx: { ...settings.bingx, apiKey: e.target.value } })} placeholder="BingX API key" />
                     </div>
-                    <div className="form-group" style={{marginBottom: '12px'}}>
+                    <div className="form-group" style={{ marginBottom: '12px' }}>
                       <label>API Secret</label>
-                      <input type="password" value={settings.bingx.apiSecret} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, apiSecret: e.target.value }})} placeholder="BingX API secret" />
+                      <input type="password" value={settings.bingx.apiSecret} onChange={(e) => setSettings({ ...settings, bingx: { ...settings.bingx, apiSecret: e.target.value } })} placeholder="BingX API secret" />
                     </div>
-                    <div className="form-group" style={{marginBottom: '12px'}}>
+                    <div className="form-group" style={{ marginBottom: '12px' }}>
                       <label>Symbol</label>
-                      <input type="text" value={settings.bingx.symbol} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, symbol: e.target.value }})} placeholder="BTCUSDT" />
+                      <input type="text" value={settings.bingx.symbol} onChange={(e) => setSettings({ ...settings, bingx: { ...settings.bingx, symbol: e.target.value } })} placeholder="BTCUSDT" />
                     </div>
-                    <div className="form-group" style={{marginBottom: '12px'}}>
+                    <div className="form-group" style={{ marginBottom: '12px' }}>
                       <label>Side</label>
-                      <select value={settings.bingx.side} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, side: e.target.value }})} style={{width:'100%', padding:'12px', background:'var(--bg-primary)', border:'1px solid var(--border-color)', color:'var(--text-primary)', borderRadius:'8px'}}>
+                      <select value={settings.bingx.side} onChange={(e) => setSettings({ ...settings, bingx: { ...settings.bingx, side: e.target.value } })} style={{ width: '100%', padding: '12px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '8px' }}>
                         <option value="BUY">BUY</option>
                         <option value="SELL">SELL</option>
                       </select>
                     </div>
-                    <div className="form-group" style={{marginBottom: '12px'}}>
+                    <div className="form-group" style={{ marginBottom: '12px' }}>
                       <label>Quantity</label>
-                      <input type="number" step="0.0001" value={settings.bingx.quantity} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, quantity: e.target.value }})} placeholder="0.01" />
+                      <input type="number" step="0.0001" value={settings.bingx.quantity} onChange={(e) => setSettings({ ...settings, bingx: { ...settings.bingx, quantity: e.target.value } })} placeholder="0.01" />
                     </div>
-                    <div className="form-group" style={{marginBottom: '12px'}}>
+                    <div className="form-group" style={{ marginBottom: '12px' }}>
                       <label>Entry / Limit Price (optional)</label>
-                      <input type="number" step="0.01" value={settings.bingx.price} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, price: e.target.value }})} placeholder="60000" />
+                      <input type="number" step="0.01" value={settings.bingx.price} onChange={(e) => setSettings({ ...settings, bingx: { ...settings.bingx, price: e.target.value } })} placeholder="60000" />
                     </div>
-                    <div className="form-group" style={{marginBottom: '12px'}}>
+                    <div className="form-group" style={{ marginBottom: '12px' }}>
                       <label>Multiple Take Profit Levels (%)</label>
-                      <input type="text" value={settings.bingx.takeProfit.join(',')} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, takeProfit: parseNumericList(e.target.value, [1.02, 1.05, 1.08]) }})} placeholder="1.02, 1.05, 1.08" />
+                      <input type="text" value={settings.bingx.takeProfit.join(',')} onChange={(e) => setSettings({ ...settings, bingx: { ...settings.bingx, takeProfit: parseNumericList(e.target.value, [1.02, 1.05, 1.08]) } })} placeholder="1.02, 1.05, 1.08" />
                     </div>
-                    <div className="form-group" style={{marginBottom: '12px'}}>
+                    <div className="form-group" style={{ marginBottom: '12px' }}>
                       <label>Multiple Stop Loss Levels (%)</label>
-                      <input type="text" value={settings.bingx.stopLoss.join(',')} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, stopLoss: parseNumericList(e.target.value, [0.98, 0.95]) }})} placeholder="0.98, 0.95" />
+                      <input type="text" value={settings.bingx.stopLoss.join(',')} onChange={(e) => setSettings({ ...settings, bingx: { ...settings.bingx, stopLoss: parseNumericList(e.target.value, [0.98, 0.95]) } })} placeholder="0.98, 0.95" />
                     </div>
-                    <div className="form-group" style={{marginBottom: '18px'}}>
+                    <div className="form-group" style={{ marginBottom: '18px' }}>
                       <label>Conditional Orders (JSON)</label>
-                      <textarea rows="5" value={JSON.stringify(settings.bingx.conditionalOrders, null, 2)} onChange={e => {
+                      <textarea rows="5" value={JSON.stringify(settings.bingx.conditionalOrders, null, 2)} onChange={(e) => {
                         try {
                           const parsed = JSON.parse(e.target.value);
                           setSettings({ ...settings, bingx: { ...settings.bingx, conditionalOrders: Array.isArray(parsed) ? parsed : [] } });
@@ -1236,17 +1404,64 @@ function App() {
                         }
                       }} />
                     </div>
-                    <button className="btn-primary" style={{width: '100%', justifyContent: 'center'}} onClick={handleSubmitBingX}>Send to BingX</button>
+                    <button className="btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={handleSubmitBingX}>Send to BingX</button>
+                  </div>
+
+                  <div className="settings-card">
+                    <h3>Trade Strategy</h3>
+                    <div className="form-group" style={{ marginBottom: '12px' }}>
+                      <label>Trade size mode</label>
+                      <select value={settings.strategy.tradeSizeMode} onChange={(e) => setSettings({ ...settings, strategy: { ...settings.strategy, tradeSizeMode: e.target.value } })} style={{ width: '100%', padding: '12px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '8px' }}>
+                        <option value="account_percent">0.002% of account balance</option>
+                        <option value="fixed">Fixed 2 USDT</option>
+                      </select>
+                    </div>
+                    <div className="form-group" style={{ marginBottom: '12px' }}>
+                      <label>Fixed trade size (USDT)</label>
+                      <input type="number" step="0.01" value={settings.strategy.fixedTradeUsd} onChange={(e) => setSettings({ ...settings, strategy: { ...settings.strategy, fixedTradeUsd: Number(e.target.value) || 2 } })} />
+                    </div>
+                    <div className="form-group" style={{ marginBottom: '12px' }}>
+                      <label>Percent of account balance</label>
+                      <input type="number" step="0.0001" value={settings.strategy.percentOfAccount} onChange={(e) => setSettings({ ...settings, strategy: { ...settings.strategy, percentOfAccount: Number(e.target.value) || 0.002 } })} />
+                    </div>
+                    <div className="form-group" style={{ marginBottom: '12px' }}>
+                      <label>Reverse trigger PnL (%)</label>
+                      <input type="number" step="0.1" value={settings.strategy.reverseTriggerPct} onChange={(e) => setSettings({ ...settings, strategy: { ...settings.strategy, reverseTriggerPct: Number(e.target.value) || 14 } })} />
+                    </div>
+                    <div className="form-group" style={{ marginBottom: '12px' }}>
+                      <label>Strategy enabled</label>
+                      <input type="checkbox" checked={settings.strategy.enabled} onChange={(e) => setSettings({ ...settings, strategy: { ...settings.strategy, enabled: e.target.checked } })} />
+                    </div>
+                    <div style={{ marginTop: '12px', padding: '12px', background: 'rgba(59,130,246,0.08)', borderRadius: '10px', border: '1px solid rgba(59,130,246,0.22)', color: 'var(--text-primary)' }}>
+                      Rule: size = min(2 USDT, balance * 0.00002). Reverse when +14% or -14%.
+                    </div>
                   </div>
 
                   <div className="settings-card">
                     <h3>Message Templates</h3>
                     <div className="form-group">
                       <label>New Asset Alert Format</label>
-                      <textarea rows="4" value={settings.msgTemplate} onChange={e => setSettings({...settings, msgTemplate: e.target.value})} />
+                      <textarea rows="4" value={settings.msgTemplate} onChange={(e) => setSettings({ ...settings, msgTemplate: e.target.value })} />
                       <small>Available tags: {'{name}, {ticker}, {price}'}</small>
                     </div>
                   </div>
+
+                  {isAdmin && (
+                    <div className="settings-card">
+                      <h3>Users & Admin Panel</h3>
+                      <div style={{ display: 'grid', gap: '10px' }}>
+                        {users.map((user) => (
+                          <div key={user.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+                            <div>
+                              <strong>{user.name || user.username}</strong><br />
+                              <small className="text-muted">{user.role}</small>
+                            </div>
+                            <button className="btn-secondary" onClick={() => setActiveUserId(user.id)}>Switch</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="settings-card">
                     <h3>Data Management</h3>
@@ -1258,7 +1473,7 @@ function App() {
             } />
 
             <Route path="*" element={
-              <div className="analytics-view" style={{textAlign: 'center', marginTop: '100px'}}>
+              <div className="analytics-view" style={{ textAlign: 'center', marginTop: '100px' }}>
                 <h2>404 - Not Found</h2>
                 <p>The page you are looking for does not exist.</p>
               </div>
