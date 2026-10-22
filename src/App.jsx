@@ -37,6 +37,7 @@ const TRANSLATIONS = {
 
 const MARKET_TABS = [
   { id: 'binance', label: '🟠 Binance', type: 'crypto' },
+  { id: 'bingx', label: '🔵 BingX', type: 'crypto' },
   { id: 'bybit', label: '🟡 Bybit', type: 'crypto' },
   { id: 'okex', label: '⚫ OKX', type: 'crypto' },
   { id: 'kucoin', label: '🟢 KuCoin', type: 'crypto' },
@@ -140,6 +141,38 @@ const safeWriteStorage = (key, value) => {
   }
 };
 
+const parseNumericList = (value, fallback = []) => {
+  if (Array.isArray(value)) {
+    return value
+      .map(item => Number(item))
+      .filter(item => Number.isFinite(item));
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map(item => Number(item.trim()))
+      .filter(item => Number.isFinite(item));
+  }
+
+  return fallback;
+};
+
+const normalizeBingXSettings = (saved = {}) => ({
+  apiKey: saved.apiKey || '',
+  apiSecret: saved.apiSecret || '',
+  market: saved.market || 'spot',
+  symbol: saved.symbol || 'BTCUSDT',
+  side: saved.side || 'BUY',
+  quantity: saved.quantity || '0.01',
+  price: saved.price || '',
+  takeProfit: parseNumericList(saved.takeProfit, [1.02, 1.05, 1.08]),
+  stopLoss: parseNumericList(saved.stopLoss, [0.98, 0.95]),
+  conditionalOrders: Array.isArray(saved.conditionalOrders) && saved.conditionalOrders.length > 0
+    ? saved.conditionalOrders
+    : [{ type: 'STOP', triggerPercent: -2.5, side: 'SELL', quantity: '0.01' }]
+});
+
 const MarketView = ({ assets, setAssets, notify, addLog }) => {
   const [activeTab, setActiveTab] = useState('binance');
   const [marketData, setMarketData] = useState([]);
@@ -160,7 +193,7 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
     }
 
     try {
-      if (tab === 'binance') {
+      if (tab === 'binance' || tab === 'bingx') {
         const res = await fetch('https://api.binance.com/api/v3/ticker/24hr');
         const data = await res.json();
         const formatted = data
@@ -172,7 +205,7 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
             price: parseFloat(d.lastPrice).toFixed(4), change24h: parseFloat(d.priceChangePercent).toFixed(2),
             funding: (Math.random() * 0.02 - 0.01).toFixed(4) + '%',
             volume: Number(d.quoteVolume) || 0,
-            type: 'Crypto', source: 'Binance'
+            type: 'Crypto', source: tab === 'bingx' ? 'BingX (proxy fallback)' : 'Binance'
           }));
         setMarketData(formatted);
       } else if (tab === 'bybit') {
@@ -229,7 +262,7 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
         else setMarketData(validFormatted);
       } else {
         const MOCK_TICKERS = ['BTC', 'ETH', 'SOL', 'XRP', 'ADA', 'AVAX', 'DOGE', 'DOT', 'LINK', 'MATIC', 'SHIB', 'LTC', 'UNI', 'ATOM', 'ETC', 'XLM', 'ALGO', 'NEAR', 'VET', 'ICP'];
-        const BASE_PRICES = { 'BTC': 65000, 'ETH': 3500, 'SOL': 140, 'XRP': 0.6, 'ADA': 0.45, 'AVAX': 35, 'DOGE': 0.15, 'DOT': 7, 'LINK': 18, 'MATIC': 0.7, 'SHIB': 0.000025, 'LTC': 80, 'UNI': 10, 'ATOM': 28, 'ETC': 25, 'XLM': 0.12, 'ALGO': 0.33, 'NEAR': 3.3, 'VET': 0.07, 'ICP': 8 };
+        const BASE_PRICES = { BTC: 65000, ETH: 3500, SOL: 140, XRP: 0.6, ADA: 0.45, AVAX: 35, DOGE: 0.15, DOT: 7, LINK: 18, MATIC: 0.7, SHIB: 0.000025, LTC: 80, UNI: 10, ATOM: 18, ETC: 25, XLM: 0.12, ALGO: 0.35, NEAR: 5, VET: 0.04, ICP: 7 };
 
         const formatted = MOCK_TICKERS.map(ticker => {
           const basePrice = BASE_PRICES[ticker];
@@ -288,7 +321,7 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
         <h3 style={{marginBottom: '16px', fontSize: '1.1rem'}}>Markets</h3>
         <ul style={{listStyle: 'none', padding: 0, margin: 0, display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '8px'}}>
           {MARKET_TABS.map(t => (
-            <li key={t.id} onClick={() => setActiveTab(t.id)} style={{padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: activeTab === t.id ? 'var(--accent-color)' : 'transparent', color: activeTab === t.id ? '#fff' : 'var(--text-primary)', border: '1px solid var(--border-color)'}}>
+            <li key={t.id} onClick={() => setActiveTab(t.id)} style={{padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: activeTab === t.id ? 'var(--accent-color)' : 'transparent', border: activeTab === t.id ? '1px solid var(--accent-color)' : '1px solid var(--border-color)', color: 'var(--text-primary)', fontWeight: activeTab === t.id ? 700 : 500}}>
               {t.label}
             </li>
           ))}
@@ -322,8 +355,8 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
                       <span style={{fontSize: '0.8rem'}}>{formatCompactVolume(asset.volume)}</span>
                     </div>
                     <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px'}}>
-                      <span style={{padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: signal.tone === 'overbought' ? 'rgba(16,185,129,0.15)' : signal.tone === 'oversold' ? 'rgba(244,63,94,0.15)' : 'rgba(148,163,184,0.15)', color: signal.tone === 'overbought' ? '#34d399' : signal.tone === 'oversold' ? '#f87171' : '#cbd5e1'}}>{signal.label}</span>
-                      <span style={{padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: momentum.tone === 'bullish' ? 'rgba(56,189,248,0.15)' : momentum.tone === 'bearish' ? 'rgba(168,85,247,0.15)' : 'rgba(148,163,184,0.15)', color: momentum.tone === 'bullish' ? '#7dd3fc' : momentum.tone === 'bearish' ? '#c4b5fd' : '#cbd5e1'}}>RSI {momentum.score}</span>
+                      <span style={{padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: signal.tone === 'overbought' ? 'rgba(16,185,129,0.15)' : signal.tone === 'oversold' ? 'rgba(239,68,68,0.15)' : 'rgba(148,163,184,0.15)', color: signal.tone === 'overbought' ? '#10b981' : signal.tone === 'oversold' ? '#ef4444' : '#cbd5e1'}}>{signal.label}</span>
+                      <span style={{padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: momentum.tone === 'bullish' ? 'rgba(56,189,248,0.15)' : momentum.tone === 'bearish' ? 'rgba(168,85,247,0.15)' : 'rgba(148,163,184,0.15)', color: momentum.tone === 'bullish' ? '#7dd3fc' : momentum.tone === 'bearish' ? '#c4b5fd' : '#cbd5e1'}}>{momentum.label}</span>
                     </div>
                   </div>
                 );
@@ -352,7 +385,7 @@ const MarketView = ({ assets, setAssets, notify, addLog }) => {
                     </td>
                     <td>{formatCompactVolume(asset.volume)}</td>
                     <td>
-                      <span style={{padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: signal.tone === 'overbought' ? 'rgba(16,185,129,0.15)' : signal.tone === 'oversold' ? 'rgba(244,63,94,0.15)' : 'rgba(148,163,184,0.15)', color: signal.tone === 'overbought' ? '#34d399' : signal.tone === 'oversold' ? '#f87171' : '#cbd5e1'}}>
+                      <span style={{padding: '4px 8px', borderRadius: '999px', fontSize: '0.72rem', background: signal.tone === 'overbought' ? 'rgba(16,185,129,0.15)' : signal.tone === 'oversold' ? 'rgba(239,68,68,0.15)' : 'rgba(148,163,184,0.15)', color: signal.tone === 'overbought' ? '#10b981' : signal.tone === 'oversold' ? '#ef4444' : '#cbd5e1'}}>
                         {signal.label}
                       </span>
                     </td>
@@ -447,13 +480,61 @@ function App() {
     }
     return {
       tgChannels: channels,
-      msgTemplate: saved.msgTemplate || '🚀 ALERT: {name} ({ticker}) just pumped to ${price}!\nTime to short? 📉'
+      msgTemplate: saved.msgTemplate || '🚀 ALERT: {name} ({ticker}) just pumped to ${price}!\nTime to short? 📉',
+      bingx: normalizeBingXSettings(saved.bingx || {})
     };
   });
   const [notifications, setNotifications] = useState([]);
 
   const fileInputRef = useRef(null);
   const t = TRANSLATIONS[lang] || TRANSLATIONS.en;
+
+  const buildBingXPayload = () => {
+    const defaultSymbol = assets.find(a => a.type === 'Crypto')?.ticker || settings.bingx.symbol || 'BTC';
+    const symbol = (settings.bingx.symbol || defaultSymbol).toUpperCase();
+    const quantity = Number(settings.bingx.quantity || '0.01');
+    const side = (settings.bingx.side || 'BUY').toUpperCase();
+
+    return {
+      apiKey: settings.bingx.apiKey,
+      apiSecret: settings.bingx.apiSecret,
+      market: settings.bingx.market || 'spot',
+      symbol: symbol.endsWith('USDT') ? symbol : `${symbol}USDT`,
+      side,
+      quantity: Number.isFinite(quantity) ? quantity : 0.01,
+      price: settings.bingx.price || '',
+      takeProfit: parseNumericList(settings.bingx.takeProfit, [1.02, 1.05, 1.08]),
+      stopLoss: parseNumericList(settings.bingx.stopLoss, [0.98, 0.95]),
+      conditionalOrders: Array.isArray(settings.bingx.conditionalOrders) ? settings.bingx.conditionalOrders : []
+    };
+  };
+
+  const handleSubmitBingX = async () => {
+    const payload = buildBingXPayload();
+    if (!payload.apiKey || !payload.apiSecret) {
+      notify('Add your BingX API key + secret first.', 'error');
+      return;
+    }
+
+    try {
+      notify('Sending BingX order request...', 'info');
+      const response = await fetch('/api/bingx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'BingX request failed');
+      }
+
+      notify(`BingX accepted: ${payload.symbol} / ${payload.side}`, 'success');
+      addLog('BingX Order', `Symbol: ${payload.symbol} | TP: ${payload.takeProfit.length} | SL: ${payload.stopLoss.length} | Conditions: ${payload.conditionalOrders.length}`);
+    } catch (error) {
+      notify(error.message || 'BingX request failed', 'error');
+    }
+  };
 
   // Lifecycle
   useEffect(() => {
@@ -832,7 +913,7 @@ function App() {
             </div>
             <div className="form-group" style={{textAlign: 'left', marginBottom: '24px'}}>
               <label>Type</label>
-              <select style={{width: '100%', padding: '12px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '8px', outline: 'none'}} value={newAsset.type} onChange={e => setNewAsset({...newAsset, type: e.target.value})}>
+              <select value={newAsset.type} onChange={e => setNewAsset({...newAsset, type: e.target.value})} style={{width: '100%', padding: '12px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '8px', outline: 'none'}}>
                 <option value="Crypto">Crypto</option>
                 <option value="Stock">Stock</option>
               </select>
@@ -923,7 +1004,7 @@ function App() {
 
                 <div className="widget chart-widget col-span-2" style={{padding: 0, overflow: 'hidden'}}>
                   <iframe
-                    src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_wen&symbol=NASDAQ%3AWEN&interval=D&symboledit=1&saveimage=1&toolbarbg=1e293b&studies=%5B%5D&theme=dark&style=1&timezone=Etc%2FUTC"
+                    src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_wen&symbol=NASDAQ%3AWEN&interval=D&symboledit=1&saveimage=1&toolbarbg=1e293b&studies=%5B%5D&theme=dark&withdateranges=1&allow_symbol_change=1"
                     width="100%"
                     height="350"
                     frameBorder="0"
@@ -1098,6 +1179,64 @@ function App() {
                       {settings.tgChannels.length === 0 && <span className="text-muted">No bots added.</span>}
                     </div>
                     <button className="btn-secondary" style={{width: '100%', justifyContent: 'center'}} onClick={() => setShowAddChannelModal(true)}><Plus size={16}/> Add Bot & Channel</button>
+                  </div>
+
+                  <div className="settings-card">
+                    <h3>BingX Trading Setup</h3>
+                    <div className="form-group" style={{marginBottom: '12px'}}>
+                      <label>Exchange</label>
+                      <select value={settings.bingx.market} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, market: e.target.value }})} style={{width:'100%', padding:'12px', background:'var(--bg-primary)', border:'1px solid var(--border-color)', color:'var(--text-primary)', borderRadius:'8px'}}>
+                        <option value="spot">Spot</option>
+                        <option value="swap">Swap</option>
+                      </select>
+                    </div>
+                    <div className="form-group" style={{marginBottom: '12px'}}>
+                      <label>API Key</label>
+                      <input type="text" value={settings.bingx.apiKey} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, apiKey: e.target.value }})} placeholder="BingX API key" />
+                    </div>
+                    <div className="form-group" style={{marginBottom: '12px'}}>
+                      <label>API Secret</label>
+                      <input type="password" value={settings.bingx.apiSecret} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, apiSecret: e.target.value }})} placeholder="BingX API secret" />
+                    </div>
+                    <div className="form-group" style={{marginBottom: '12px'}}>
+                      <label>Symbol</label>
+                      <input type="text" value={settings.bingx.symbol} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, symbol: e.target.value }})} placeholder="BTCUSDT" />
+                    </div>
+                    <div className="form-group" style={{marginBottom: '12px'}}>
+                      <label>Side</label>
+                      <select value={settings.bingx.side} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, side: e.target.value }})} style={{width:'100%', padding:'12px', background:'var(--bg-primary)', border:'1px solid var(--border-color)', color:'var(--text-primary)', borderRadius:'8px'}}>
+                        <option value="BUY">BUY</option>
+                        <option value="SELL">SELL</option>
+                      </select>
+                    </div>
+                    <div className="form-group" style={{marginBottom: '12px'}}>
+                      <label>Quantity</label>
+                      <input type="number" step="0.0001" value={settings.bingx.quantity} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, quantity: e.target.value }})} placeholder="0.01" />
+                    </div>
+                    <div className="form-group" style={{marginBottom: '12px'}}>
+                      <label>Entry / Limit Price (optional)</label>
+                      <input type="number" step="0.01" value={settings.bingx.price} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, price: e.target.value }})} placeholder="60000" />
+                    </div>
+                    <div className="form-group" style={{marginBottom: '12px'}}>
+                      <label>Multiple Take Profit Levels (%)</label>
+                      <input type="text" value={settings.bingx.takeProfit.join(',')} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, takeProfit: parseNumericList(e.target.value, [1.02, 1.05, 1.08]) }})} placeholder="1.02, 1.05, 1.08" />
+                    </div>
+                    <div className="form-group" style={{marginBottom: '12px'}}>
+                      <label>Multiple Stop Loss Levels (%)</label>
+                      <input type="text" value={settings.bingx.stopLoss.join(',')} onChange={e => setSettings({ ...settings, bingx: { ...settings.bingx, stopLoss: parseNumericList(e.target.value, [0.98, 0.95]) }})} placeholder="0.98, 0.95" />
+                    </div>
+                    <div className="form-group" style={{marginBottom: '18px'}}>
+                      <label>Conditional Orders (JSON)</label>
+                      <textarea rows="5" value={JSON.stringify(settings.bingx.conditionalOrders, null, 2)} onChange={e => {
+                        try {
+                          const parsed = JSON.parse(e.target.value);
+                          setSettings({ ...settings, bingx: { ...settings.bingx, conditionalOrders: Array.isArray(parsed) ? parsed : [] } });
+                        } catch {
+                          setSettings({ ...settings, bingx: { ...settings.bingx, conditionalOrders: [] } });
+                        }
+                      }} />
+                    </div>
+                    <button className="btn-primary" style={{width: '100%', justifyContent: 'center'}} onClick={handleSubmitBingX}>Send to BingX</button>
                   </div>
 
                   <div className="settings-card">
